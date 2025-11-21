@@ -15,14 +15,18 @@ flag_spikes <- function(x, z = 5, lim_flag = NULL) {
   # scale <- mad(y, na.rm = TRUE)
   scale <- robustbase::Qn(y, na.rm = TRUE)
   
-  # Helper function for calculating excess kurtosis
+  # Helper function for calculating kurtosis
+  # Note: identical results given by moments::kurtosis
   kurtosis <- function(x) {
     x <- na.omit(x)
     n <- length(x)
-    # Pearson's definition of excess kurtosis
-    g2 <- n * sum((x - mean(x))^4) / (sum((x - mean(x))^2)^2) - 3
-    # Sample size adjustment
-    (g2 + 3) * (1 - 1 / n)^2 - 3
+    
+    mu <- mean(x)
+    dev <- x - mu
+    m2 <- mean(dev^2)
+    m4 <- mean(dev^4)
+    
+    m4/m2^2
   }
   
   # Calculate threshold
@@ -31,7 +35,7 @@ flag_spikes <- function(x, z = 5, lim_flag = NULL) {
   b <- 0.1720364
   z_adj <- exp(a - (b * log(kur)))/exp(a - (b * log(3)))
   
-  z_adj <- 1 # get rid of this to actually use adjustment
+  z_adj <- 1 # proceeding without kurtosis adjustment (for now)
   z <- z * z_adj
   
   # Check y against threshold
@@ -49,6 +53,7 @@ flag_spikes <- function(x, z = 5, lim_flag = NULL) {
   hi <- lag(zdiff) == +1 & zdiff == -1 & lead(zdiff) == +1
   
   flag <- dplyr::if_else(hi | lo, 2L, 0L)
-  tidyr::replace_na(flag, 0)
+  # flag <- tidyr::replace_na(flag, 0)
+  flag
 }
 
