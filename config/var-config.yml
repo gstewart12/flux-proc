@@ -1,0 +1,525 @@
+# VARIABLE:
+#   type:
+#   units: units
+#   description:
+#   model_type:
+#   phys_lims: [min, max]
+
+# Date/time
+TIMESTAMP:
+  type: timekeeping
+  units: YYYY-MM-DDTHH:MM:SSZ
+  description: ISO timestamp, middle of averaging period
+  model_type: null
+  phys_lims: null
+  gapfill: null
+TIMESTAMP_START:
+  type: timekeeping
+  units: YYYYMMDDHHMM
+  description: ISO timestamp – short format, start of averaging period
+  model_type: null
+  phys_lims: null
+  gapfill: null
+TIMESTAMP_END:
+  type: timekeeping
+  units: YYYYMMDDHHMM
+  description: ISO timestamp – short format, end of averaging period
+  model_type: null
+  phys_lims: null
+  gapfill: null
+
+# 2-D footprint
+FETCH_70:
+  type: footprint
+  units: m
+  description: distance at which cross-wind integrated footprint cumulative probability is 70%
+  model_type: null
+  phys_lims: null
+  gapfill: null
+FETCH_80:
+  type: footprint
+  units: m
+  description: distance at which cross-wind integrated footprint cumulative probability is 80%
+  model_type: null
+  phys_lims: null
+  gapfill: null
+FETCH_90:
+  type: footprint
+  units: m
+  description: distance at which cross-wind integrated footprint cumulative probability is 90%
+  model_type: null
+  phys_lims: null
+  gapfill: null
+FETCH_MAX:
+  type: footprint
+  units: m
+  description: distance at which footprint contribution is maximum
+  model_type: null
+  phys_lims: null
+  gapfill: null
+
+# Gas concentrations
+H2O:
+  type: dep_gases
+  units: mmol mol-1
+  description: water vapor (H2O) mole fraction of wet air
+  model_type: ga
+  phys_lims: [0, 45]
+  gapfill: null
+H2O_SIGMA:
+  type: dep_gases
+  units: mmol mol-1
+  description: standard deviation of water vapor (H2O) mole fraction
+  model_type: ga
+  phys_lims: [0, 100]
+  gapfill: null
+CO2:
+  type: dep_gases
+  units: µmol mol-1
+  description: carbon dioxide (CO2) mole fraction in wet air
+  model_type: ga
+  phys_lims: [250, 1000]
+  gapfill: null
+CO2_SIGMA:
+  type: dep_gases
+  units: µmol mol-1
+  description: standard deviation of carbon dioxide (CO2) mole fraction
+  model_type: ga
+  phys_lims: [0.0, 1.5]
+  gapfill: null
+CH4:
+  type: dep_gases
+  units: µmol mol-1
+  description: methane (CH4) mole fraction in wet air
+  model_type: ga
+  height_direction: pos
+  phys_lims: [0, 15]
+  gapfill: null
+CH4_SIGMA:
+  type: dep_gases
+  units: µmol mol-1
+  description: standard deviation of methane (CH4) mole fraction
+  model_type: ga
+  phys_lims: [0.000, 0.025]
+  gapfill: null
+
+# Turbulent fluxes
+H:
+  type: heat
+  units: W m-2
+  description: sensible heat turbulent flux (no storage correction)
+  model_type: sa
+  phys_lims: [-200, 600] # [-200, 400]
+LE:
+  type: heat
+  units: W m-2
+  description: latent heat turbulent flux (no storage correction)
+  model_type: saga
+  phys_lims: [-200, 800] # [-100, 700]
+FH2O:
+  type: heat
+  units: mmol m-2 s-1
+  description: water vapor (H2O) turbulent flux (no storage correction)
+  model_type: saga
+  phys_lims: null
+FC:
+  type: gases
+  units: "µmol m-2 s-1"
+  description: carbon dioxide (CO2) turbulent flux (no storage correction)
+  model_type: saga
+  phys_lims: [-50, 50]
+FCH4:
+  type: gases
+  units: "µmol m-2 s-1"
+  description: methane (CH4) turbulent flux (no storage correction)
+  model_type: saga
+  phys_lims: null # depends on site
+
+# Storage fluxes
+SH:
+  type: heat
+  units: W m-2
+  description: sensible heat (H) storage flux
+  model_type: temp
+  phys_lims: [-20, 20]
+SLE:
+  type: heat
+  units: W m-2
+  description: latent heat (LE) storage flux
+  model_type: ga
+  phys_lims: [-50, 50]
+SC:
+  type: gases
+  units: "µmol m-2 s-1"
+  description: carbon dioxide (CO2) storage flux
+  model_type: ga
+  phys_lims: [-30, 10]
+SCH4:
+  type: gases
+  units: "µmol m-2 s-1"
+  description: methane (CH4) storage flux
+  model_type: ga
+  phys_lims: [-0.4, 0.4]
+
+# Flux random uncertainty
+H_RANDUNC:
+  type: heat
+  units: W m-2
+  description: sensible heat (H) flux random uncertainty
+  model_type:
+  phys_lims: null
+  gapfill: null
+LE_RANDUNC:
+  type: heat
+  units: W m-2
+  description: latent heat (LE) flux random uncertainty
+  model_type:
+  phys_lims: null
+  gapfill: null
+FC_RANDUNC:
+  type: gases
+  units: "µmol m-2 s-1"
+  description: carbon dioxide (CO2) flux random uncertainty
+  model_type:
+  phys_lims: null
+  gapfill: null
+FCH4_RANDUNC:
+  type: gases
+  units: "µmol m-2 s-1"
+  description: methane (CH4) flux random uncertainty
+  model_type:
+  phys_lims: null
+  gapfill: null
+
+# Atmospheric conditions
+T_SONIC:
+  type: dep_atm
+  units: deg C
+  description: sonic temperature
+  model_type: sa
+  phys_lims: [-20, 50]
+  gapfill: null
+T_SONIC_SIGMA:
+  type: dep_atm
+  units: deg C
+  description: standard deviation of sonic temperature
+  model_type: sa
+  phys_lims: [0, 2]
+  gapfill: null
+TA:
+  type: met_atm
+  units: deg C
+  description: air temperature
+  model_type: temp
+  phys_lims: [-20, 50]
+  gapfill: [LI, ALT, MDS]
+PA:
+  type: met_atm
+  units: kPa
+  description: atmospheric pressure
+  model_type: pres
+  phys_lims: [95, 105]
+  gapfill: [LI, ALT]
+VPD:
+  type: met_atm
+  units: hPa
+  description: vapor pressure deficit
+  model_type: rh
+  phys_lims: [0, 45]
+  gapfill: [LI, ALT, MDS]
+RH:
+  type: met_atm
+  units: "%"
+  description: relative humidity, range 0-100
+  model_type: rh
+  phys_lims: [0, 100]
+  gapfill: [LI, ALT]
+BLH_ERA:
+  type: met_atm
+  units: m
+  description: planetary boundary layer height
+  model_type: pblh
+  phys_lims: null # [0, 3000]
+  gapfill: null
+
+# Precipitation
+P_RAIN:
+  type: met_precip
+  units: mm
+  description: rainfall
+  model_type: rain
+  phys_lims: [0, 50]
+  gapfill: [ALT]
+
+# Radiation components
+LW_IN:
+  type: met_rad
+  units: W m-2
+  description: longwave radiation, incoming
+  model_type: rad
+  phys_lims: [100, 600]
+  gapfill: [MDS, ALT]
+LW_OUT:
+  type: met_rad
+  units: W m-2
+  description: longwave radiation, outgoing
+  model_type: rad
+  phys_lims: [100, 750]
+  gapfill: [MDS, ALT]
+SW_IN:
+  type: met_rad
+  units: W m-2
+  description: shortwave radiation, incoming
+  model_type: rad
+  phys_lims: [0, 1200]
+  gapfill: [ALT, MDS]
+SW_OUT:
+  type: met_rad
+  units: W m-2
+  description: shortwave radiation, outgoing
+  model_type: rad
+  phys_lims: [-10, 500]
+  gapfill: [ALT]
+NETRAD:
+  type: met_rad
+  units: W m-2
+  description: net radiation
+  model_type: rad
+  phys_lims: [-200, 900]
+  gapfill: [LI, ALT]
+PPFD_IN:
+  type: met_rad
+  units: "µmol m-2 s-1"
+  description: photosynthetic photon flux density, incoming
+  model_type: rad
+  phys_lims: [0, 2200]
+  gapfill: [ALT]
+
+# Soil conditions
+SWC:
+  type: met_soil
+  units: "%"
+  description: soil water content (volumetric), range 0-100
+  model_type: swc
+  phys_lims: [0, 100]
+  gapfill: [LI, MDS, ALT]
+TS:
+  type: met_soil
+  units: deg C
+  description: soil temperature
+  model_type: temp
+  phys_lims: [-5, 35]
+  gapfill: [LI, MDS, ALT]
+G:
+  type: met_soil
+  units: W m-2
+  description: soil heat flux
+  model_type: soil_h
+  phys_lims: [-100, 250]
+  gapfill: [LI, MDS, ALT]
+WTD:
+  type: met_soil
+  units: m
+  description: water table depth
+  model_type: wtd
+  phys_lims: null
+  gapfill: null
+TW:
+  type: aquatic
+  units: deg C
+  description: water temperature
+  model_type: temp
+  phys_lims: null
+  gapfill: null
+
+# Wind components
+U_UNROT:
+  type: dep_wind
+  units: m s-1
+  description: wind velocity (towards main-wind direction after coordinates rotation)
+  model_type: wind
+  phys_lims: [-15, 15]
+  gapfill: null
+U_SIGMA:
+  type: dep_wind
+  units: m s-1
+  description: standard deviation of velocity fluctuations (towards main-wind direction after coordinates rotation)
+  model_type: wind
+  phys_lims: [0, 5]
+  gapfill: null
+V_UNROT:
+  type: dep_wind
+  units: m s-1
+  description: lateral wind velocity (cross main-wind direction after coordinates rotation)
+  model_type: wind
+  phys_lims: [-15, 15]
+  gapfill: null
+V_SIGMA:
+  type: dep_wind
+  units: m s-1
+  description: standard deviation of lateral velocity fluctuations (cross main-wind direction after coordinates rotation)
+  model_type: wind
+  phys_lims: [0, 3]
+  gapfill: null
+W_UNROT:
+  type: dep_wind
+  units: m s-1
+  description: vertical wind velocity
+  model_type: wind
+  phys_lims: [-0.7, 0.7]
+  gapfill: null
+W_SIGMA:
+  type: dep_wind
+  units: m s-1
+  description: standard deviation of vertical velocity fluctuations
+  model_type: wind
+  phys_lims: [0.0, 1.5]
+  gapfill: null
+
+# Wind conditions
+WS:
+  type: met_wind
+  units: m s-1
+  description: wind speed
+  model_type: wind
+  phys_lims: [0, 40]
+  gapfill: [LI, ALT]
+WS_MAX:
+  type: met_wind
+  units: m s-1
+  description: maximum wind speed in the averaging period
+  model_type: wind
+  phys_lims: null
+  gapfill: null
+WD:
+  type: met_wind
+  units: deg
+  description: wind direction
+  model_type: wind
+  phys_lims: [0, 360]
+  gapfill: [ALT]
+WD_SIGMA:
+  type: met_wind
+  units: deg
+  description: standard deviation of wind direction
+  model_type: null
+  phys_lims: null
+  gapfill: null
+TAU:
+  type: met_wind
+  units: kg m-1 s-2
+  description: momentum flux
+  model_type: wind
+  phys_lims: null # [-3, 1]
+  gapfill: null
+USTAR:
+  type: met_wind
+  units: m s-1
+  description: friction velocity
+  model_type: wind
+  phys_lims: [0, 3]
+  gapfill: [LI, MDS, ALT]
+MO_LENGTH:
+  type: met_wind
+  units: m
+  description: Monin-Obukhov length
+  model_type: wind
+  phys_lims: null
+  gapfill: null
+ZL:
+  type: met_wind
+  units: nondimensional
+  description: Monin-Obukhov Stability parameter
+  model_type: wind
+  phys_lims: null
+  gapfill: null
+
+# Other wind
+ROT_PITCH:
+  type: dep_wind
+  units: deg
+  description: second axis rotation angle
+  model_type: wind
+  phys_lims: [-30, 30]
+  gapfill: null
+
+# Flux quality indicators
+H_SSITC_TEST:
+  type: qc_flag
+  units: null
+  description: sensible heat (H) flux test of steady state and integral turbulence characteristics
+  model_type: null
+  phys_lims: null
+  gapfill: null
+LE_SSITC_TEST:
+  type: qc_flag
+  units: null
+  description: latent heat (LE) flux test of steady state and integral turbulence characteristics
+  model_type: null
+  phys_lims: null
+  gapfill: null
+FC_SSITC_TEST:
+  type: qc_flag
+  units: null
+  description: carbon dioxide (CO2) flux test of steady state and integral turbulence characteristics
+  model_type: null
+  phys_lims: null
+  gapfill: null
+FCH4_SSITC_TEST:
+  type: qc_flag
+  units: null
+  description: methane (CH4) flux test of steady state and integral turbulence characteristics
+  model_type: null
+  phys_lims: null
+  gapfill: null
+H_SCF:
+  type: qc_flag
+  units: null
+  description: sensible heat (H) flux spectral correction factor
+  model_type: null
+  phys_lims: null
+  gapfill: null
+LE_SCF:
+  type: qc_flag
+  units: null
+  description: latent heat (LE) flux spectral correction factor
+  model_type: null
+  phys_lims: null
+  gapfill: null
+FC_SCF:
+  type: qc_flag
+  units: null
+  description: carbon dioxide (CO2) flux spectral correction factor
+  model_type: null
+  phys_lims: null
+  gapfill: null
+FCH4_SCF:
+  type: qc_flag
+  units: null
+  description: methane (CH4) flux spectral correction factor
+  model_type: null
+  phys_lims: null
+  gapfill: null
+
+# Partitioned CO2 fluxes
+GPP:
+  type: products
+  units: "µmol m-2 s-1"
+  description: gross primary productivity
+  model_type: saga
+  phys_lims: null # [-30, 100]
+  gapfill: null
+NEE:
+  type: products
+  units: "µmol m-2 s-1"
+  description: net ecosystem exchange
+  model_type: saga
+  phys_lims: null # [-100, 100]
+  gapfill: null
+RECO:
+  type: products
+  units: "µmol m-2 s-1"
+  description: ecosystem respiration
+  model_type: saga
+  phys_lims: null # [-20, 50]
+  gapfill: null

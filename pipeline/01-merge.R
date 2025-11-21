@@ -22,7 +22,7 @@ output_dir <- file.path("output", site, year) # where to write output
 if (!dir.exists(output_dir)) dir.create(output_dir)
 
 # Load configuration file
-cfg <- read_yaml("config.yml")
+cfg <- read_yaml("config/config.yml")
 
 ## Read and combine the EddyPro files ------------------------------------------
 

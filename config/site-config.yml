@@ -1,0 +1,217 @@
+default:
+  rep_merge:
+    # Variables with replicate measurements: order and method in which to combine
+    TA:
+      order: [TA_MET, TA_EP, CUSTOM_AIR_T_MEAN]
+      method: coalesce
+    PA:
+      order: [CUSTOM_AIR_P_MEAN, PA_EP]
+      method: coalesce
+    VPD:
+      order: [VPD_MET, VPD_EP]
+      method: coalesce
+    G:
+      order: [G_1, G_2, G_3]
+      method: average
+    SWC:
+      order: [SWC_1, SWC_2, SWC_3]
+      method: average
+    TS:
+      order: [TS_1, TS_2, TS_3]
+      method: average
+  gapfill_merge:
+    TA:
+      order: [LI, ALT1, ALT2, MDS, ERA]
+    PA:
+      order: [LI, ALT1, ALT2, ERA]
+    RH:
+      order: [LI, ALT1, ALT2, ERA]
+    VPD:
+      order: [LI, ALT1, ALT2, MDS, ERA]
+    WS:
+      order: [LI, ALT1, ALT2, ERA]
+    WD:
+      order: [ALT1, ALT2, ERA]
+    USTAR:
+      order: [LI, MDS, ALT1, ALT2, ERA]
+    PPFD_IN:
+      order: [ALT1, ALT2, ERA]
+    SW_IN:
+      order: [ALT1, ALT2, MDS, ERA]
+    SW_OUT:
+      order: [ALT1, ALT2, ERA]
+    LW_IN:
+      order: [MDS, ALT1, ALT2, ERA]
+    NETRAD:
+      order: [LI, ALT1, ALT2, ERA]
+    P_RAIN:
+      order: [ALT1, ALT2, ERA]
+    G:
+      order: [KS, MDS, ALT1, ALT2, ERA]
+    TS:
+      order: [KS, MDS, ALT1, ALT2, ALT3]
+    SWC:
+      order: [KS, MDS, ERA]
+
+JLA:
+  flagged_periods:
+    LW_IN:
+      - from: 2019-06-17 15:15
+        to: 2020-07-03 06:15
+        reason: null
+    LW_OUT:
+      - from: 2019-06-17 15:15
+        to: 2020-07-03 06:15
+        reason: null
+    P_RAIN:
+      - from: 2019-12-01 03:45
+        to: 2021-02-26 13:15
+        reason: null
+    CUSTOM_AIR_P_MEAN:
+      - from: 2020-05-04 00:15
+        to: 2023-08-04 11:15
+        reason: stuck on constant
+    SWC_1:
+      - from: 2022-03-12 16:15
+        to: 2024-10-25 03:15
+        reason: null
+    SWC_2:
+      - from: 2021-05-19 14:15
+        to: 2021-11-23 08:15
+        reason: null
+      - from: 2022-03-12 16:15
+        to: 2023-11-05 11:15
+        reason: null
+    SWC_3:
+      - from: 2022-03-12 16:15
+        to: 2024-10-31 11:15
+        reason: null
+    TS_1:
+      - from: 2022-03-12 16:15
+        to: 2022-08-23 08:15
+        reason: null
+      - from: 2023-04-17 00:15
+        to: 2024-10-25 03:15
+        reason: erratic behavior
+    TS_2:
+      - from: 2021-05-19 14:15
+        to: 2021-11-23 08:15
+        reason: null
+    TS_3:
+      - from: 2022-03-12 16:15
+        to: 2022-08-23 08:15
+        reason: null
+      - from: 2023-04-17 00:15
+        to: 2024-10-31 11:15
+        reason: erratic behavior
+  rep_merge:
+    TA:
+      order: [CUSTOM_AIR_T_MEAN, TA_EP, TA_MET]
+      method: coalesce
+    PA:
+      order: [CUSTOM_AIR_P_MEAN, PA_EP]
+      method: coalesce
+    VPD:
+      order: [VPD_EP, VPD_MET]
+      method: coalesce
+    G:
+      order: [G_1, G_2, G_3]
+      method: average
+    SWC:
+      order: [SWC_1, SWC_2, SWC_3]
+      method: average
+    TS:
+      order: [TS_1, TS_2, TS_3]
+      method: average
+
+JLN:
+  flagged_periods:
+    P_RAIN:
+      - from: 2020-11-18 00:15
+        to: 2021-05-15 15:15
+        reason: stuck on zero
+    TS_1:
+      - from: 2022-05-10 02:45
+        to: 2022-05-20 03:15
+        reason: stuck on constant
+    TS_2:
+      - from: 2022-04-10 23:15
+        to: 2022-05-20 03:15
+        reason: erratic behavior
+    PPFD_IN:
+      - from: 2023-10-19 06:45
+        to: 2024-06-14 04:45
+        reason: stuck on zero
+  rep_merge:
+    TA:
+      order: [CUSTOM_AIR_T_MEAN, TA_EP, TA_MET]
+      method: coalesce
+    PA:
+      order: [CUSTOM_AIR_P_MEAN, PA_EP]
+      method: coalesce
+    VPD:
+      order: [VPD_EP, VPD]
+      method: coalesce
+    G:
+      order: [G_1, G_3]
+      method: average
+    SWC:
+      order: [SWC_3]
+      method: average
+    TS:
+      order: [TS_1, TS_2, TS_3]
+      method: average
+
+JLR:
+  flagged_periods:
+    LOGGERPOWER:
+      - from: 2019-08-21 05:45
+        to: 2019-08-24 07:15
+        reason: null
+      - from: 2019-08-24 18:15
+        to: 2019-08-25 07:15
+        reason: null
+      - from: 2019-08-25 20:45
+        to: 2019-08-26 07:15
+        reason: null
+    P_RAIN:
+      - from: 2020-10-11 19:45
+        to: 2020-11-18 11:15
+        reason: null
+    TS_2:
+      - from: 2022-10-27 09:15
+        to: 2022-11-11 18:45
+        reason: stuck on constant
+      - from: 2023-07-27 23:15
+        to: 2023-09-06 17:15
+        reason: stuck on constant
+    SWC_2:
+      - from: 2022-10-27 09:15
+        to: 2022-11-11 18:45
+        reason: stuck on constant
+      - from: 2023-07-27 23:15
+        to: 2023-09-06 17:15
+        reason: stuck on constant
+    CUSTOM_AIR_P_MEAN:
+      - from: 2023-06-18 12:45
+        to: 2023-08-07 09:15
+        reason: null
+  rep_merge:
+    TA:
+      order: [TA_MET, CUSTOM_AIR_T_MEAN, TA_EP]
+      method: coalesce
+    PA:
+      order: [CUSTOM_AIR_P_MEAN, PA_EP]
+      method: coalesce
+    VPD:
+      order: [VPD_MET, VPD_EP]
+      method: coalesce
+    G:
+      order: [G_2, G_3]
+      method: average
+    SWC:
+      order: [SWC_3]
+      method: average
+    TS:
+      order: [TS_1, TS_2, TS_3]
+      method: average
