@@ -4,12 +4,18 @@ A home for the Palmer Lab flux data processing pipeline
 
 > [!NOTE] Limited applicability.
 >
-> I designed this pipeline to be flexible, but reproducibility and other best practices fell victim to triage as I prepared to defend my dissertation. Therefore, it likely has limited applicability beyond my data. My goal is to eventually make it useful to others and other datasets. This may happen soon, later, or never.
+> I designed this pipeline to be flexible, but reproducibility and other best practices fell victim to triage as I prepared to defend my dissertation. Therefore, it likely has limited applicability beyond my data. My goal is to eventually make it useful to others and other datasets. This may happen sooner, later, or never.
 
 ## File directory organization:
 
--   archive: anything outdated or superfluous but can't rule out future value
--   data: raw data
+-   /archive: anything outdated or superfluous but can't rule out future value
+-   /config: 
+-   /data: raw data
+-   /output:
+-   /pipeline:
+-   /R: code that will only ever be called by other scripts
+-   /reports:
+-   /tools:
 
 ## Before starting pipeline:
 
