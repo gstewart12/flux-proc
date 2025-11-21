@@ -1,0 +1,130 @@
+merge:
+  na_vals: ["-9999", "9999", "9999.99"]
+
+correct:
+  noaa_key: yKc9F
+
+qc_auto:
+  mvc_dist_thr: 5
+  rad_dist_thr: 50
+  # Maximum global radiation for defining nighttime
+  night_thr: 20
+  # Minimum LI-7500 (CO2/H2O) signal strength
+  agc_min: 70
+  # Minimum LI-7700 (CH4) signal strength
+  rssi_min: 10
+  # Maximum spectral correction factor for fluxes
+  scf_max: 2
+  # Maximum rainfall for LI-7500 dependents
+  rain_thr: 0
+  # Sonic anemometer dependencies
+  sa_vars:
+    [
+      U_UNROT,
+      U_SIGMA,
+      V_UNROT,
+      V_SIGMA,
+      W_UNROT,
+      W_SIGMA,
+      T_SONIC,
+      T_SONIC_SIGMA,
+      ROT_PITCH,
+    ]
+  # LI-7500 dependencies
+  li7500_vars: [H2O, H2O_SIGMA, CO2, CO2_SIGMA]
+  # LI-7700 dependencies
+  li7700_vars: [CH4, CH4_SIGMA]
+  # Variables to check for spikes
+  spike_vars: [TA, PA, RH, VPD, LW_IN, LW_OUT, G, SWC]
+  # Methane (CH4) flux absolute limits; site-specific
+  fch4_lims:
+    JLA: [-0.15, 0.30]
+    JLN: [-0.15, 0.85]
+    JLR: [-0.15, 0.85]
+
+biomet_gapfill:
+  # min % available points for valid de-biasing coefs
+  na_frac: 0.5
+  # max gap length for linear interpolation
+  max_interp: 3
+  # >0 since ERA interpolation can create tiny values
+  precip_thr: 0.1
+  # Soil variables get special gapfilling treatment
+  soil_vars: [G, SWC, TS]
+  # Variables that get debiased using linear regression forced through (0, 0)
+  lm0_vars: [VPD, WS, USTAR, PPFD_IN, SW_IN, P_RAIN]
+
+sites: [JLA, JLN, JLR]
+
+flux_vars: [H, LE, FC, FCH4]
+
+dep_vars:
+  [
+    U_UNROT,
+    V_UNROT,
+    W_UNROT,
+    T_SONIC,
+    ROT_PITCH,
+    H2O,
+    CO2,
+    CH4,
+    U_SIGMA,
+    V_SIGMA,
+    W_SIGMA,
+    T_SONIC_SIGMA,
+    H2O_SIGMA,
+    CO2_SIGMA,
+    CH4_SIGMA,
+  ]
+
+qc_vars:
+  [
+    H_SSITC_TEST,
+    LE_SSITC_TEST,
+    FC_SSITC_TEST,
+    FCH4_SSITC_TEST,
+    H2O_TLAG_ACTUAL,
+    CO2_TLAG_ACTUAL,
+    CH4_TLAG_ACTUAL,
+    H2O_TLAG_USED,
+    CO2_TLAG_USED,
+    CH4_TLAG_USED,
+    H_SCF,
+    LE_SCF,
+    FC_SCF,
+    FCH4_SCF,
+    INST_LI7500_AGC_OR_RSSI,
+    CUSTOM_RSSI_77_MEAN,
+  ]
+
+met_vars:
+  [
+    TA,
+    PA,
+    VPD,
+    RH,
+    WS,
+    WD,
+    USTAR,
+    P_RAIN,
+    LW_IN,
+    LW_OUT,
+    SW_IN,
+    SW_OUT,
+    NETRAD,
+    PPFD_IN,
+    SWC,
+    TS,
+    G,
+  ]
+
+essential_vars: [
+    TIMESTAMP,
+    MO_LENGTH,
+    ZETA,
+    BLH,
+    SH,
+    SLE,
+    SC
+    SCH4,
+  ]

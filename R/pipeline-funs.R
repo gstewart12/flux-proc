@@ -8,11 +8,6 @@ get_eddypro_files_year <- function(dir, year, type = "fluxnet") {
   
   output_dirs <- stringr::str_subset(list.dirs(dir), "output$")
   
-  # output_dates <- output_dirs |>
-  #   purrr::map(\(x) list.files(x, pattern = "_metadata_", full.names = TRUE)) |>
-  #   purrr::map(\(x) paste("cut -f2 -d,", x)) |>
-  #   purrr::map(\(x) scan(pipe(x), what = character(), skip = 1, quiet = TRUE))
-  
   # Check range of dates in each EddyPro metadata file
   output_dates <- output_dirs |>
     purrr::map(\(x) list.files(x, pattern = "_metadata_", full.names = TRUE)) |>
@@ -30,6 +25,29 @@ get_eddypro_files_year <- function(dir, year, type = "fluxnet") {
   
   files <- purrr::map_chr(year_dirs, \(x) list.files(x, pattern = type))
   file.path(year_dirs, files)
+}
+
+# Helper function for cleaning dependencies
+na_if_outside <- function(x, left, right) {
+  dplyr::if_else(dplyr::between(x, left, right), x, NA_real_)
+}
+
+# Orthogonal distance regression
+odr_coef <- function(x, y) {
+  df <- data.frame(x = x, y = y)
+  r <- prcomp(~ x + y, data = df, na.action = na.exclude)
+  slope <- r$rotation[2, 1] / r$rotation[1, 1]
+  int <- r$center[2] - slope * r$center[1]
+  c(slope, int)
+}
+
+# Flag multivariate comparison
+flag_mvc <- function(x, y, dist_thr, abs_dist_thr = 0) {
+  odr <- odr_coef(x, y)
+  resid <- y - (x * odr[1] + odr[2])
+  dist <- abs(resid/sqrt(1 + odr[1]^2))
+  rse <- sqrt(mean(dist^2, na.rm = TRUE))
+  dplyr::if_else(dist > dist_thr * rse & dist > abs_dist_thr, 2, 0)
 }
 
 # get_debias_window <- function(x, y, target_ind, na_frac) {
@@ -61,12 +79,15 @@ get_debias_window <- function(x, y, target_ind, na_frac) {
 
   # Precompute valid indices
   is_valid <- complete.cases(x, y)
-  valid_cumsum <- cumsum(is_valid)
+  cume_valid <- cumsum(is_valid)
   
   # Function to get valid count in a window [i, j]
   count_valid <- function(i, j) {
-    if (i == 1) return(valid_cumsum[j])
-    return(valid_cumsum[j] - valid_cumsum[i - 1])
+    if (i == 1) {
+      cume_valid[j]
+    } else {
+      cume_valid[j] - cume_valid[i - 1]
+    }
   }
   
   # Binary search for shortest expansion satisfying max percent NA
@@ -75,15 +96,17 @@ get_debias_window <- function(x, y, target_ind, na_frac) {
     i <- max(1, window_start - e)
     j <- min(length(y), window_end + e)
     valid_count <- count_valid(i, j)
+    # If valid_count % never reaches na_frac, best_window is all data
+    best_window <- i:j
     if (valid_count / (j - i + 1) >= na_frac) {
-      best_window <- i:j
+      # best_window <- i:j
       break
     }
   }
   best_window
 }
 
-# Function to compute lagged correlation and detect phase shift
+# Compute lagged correlation and detect phase shift
 get_best_lag <- function(x, y, lag.max = 48, lag.default = 0) {
   
   if (all(is.na(x + y))) {
@@ -92,10 +115,15 @@ get_best_lag <- function(x, y, lag.max = 48, lag.default = 0) {
   
   ccf <- ccf(x, y, na.action = na.pass, lag.max = lag.max, plot = FALSE)
   
+  if (all(is.na(ccf$acf[, , 1]))) {
+    return(lag.default)
+  }
+  
   # return k, where x[t+k] ~ y[t]
   ccf$lag[, , 1][which.max(ccf$acf[, , 1])]
 }
 
+# Correct phase shift between two variables
 apply_lag <- function(x, k) {
   if (k > 0) {
     # if k > 0, x lags y (changes in x follow changes in y)
@@ -106,7 +134,7 @@ apply_lag <- function(x, k) {
   }
 }
 
-# [function purpose]
+# Find offset that maximizes covariance (for debiasing wind direction)
 cov_wd <- function(x, y, deg = 0:359) {
   map_dbl(deg, \(d) cov((x + d) %% 360, y, use = "pairwise.complete.obs"))
 }
@@ -114,28 +142,31 @@ cov_wd <- function(x, y, deg = 0:359) {
 get_fit_stats <- function(x, y, fit) {
   n_hh <- length(x)
   
+  # Fit is NA if there are no complete cases
+  stats <- list(
+    frac_hh = sum(complete.cases(x, y))/n_hh,
+    slope = NA,
+    int = NA,
+    r2 = NA,
+    rmse = NA,
+    var_ratio = NA,
+    n_used = 0
+  )
+  
   if (inherits(fit, "lm")) {
-    list(
-      frac_hh = length(fitted(fit))/n_hh,
-      slope = if (is.na(coef(fit)[2])) coef(fit)[1] else coef(fit)[2],
-      int = if (is.na(coef(fit)[2])) 0 else coef(fit)[1],
-      r2 = summary(fit)$r.squared,
-      rmse = sqrt(mean(fit$residuals^2)),
-      # var_ratio = var(fit$model[, 1])/var(fit$model[, 2]),
-      var_ratio = var(fit$model[, 1])/var(fitted(fit)),
-      n_used = 0
-    )
+    stats$slope <- if (is.na(coef(fit)[2])) coef(fit)[1] else coef(fit)[2]
+    stats$int <- if (is.na(coef(fit)[2])) 0 else coef(fit)[1]
+    stats$r2 <- summary(fit)$r.squared
+    stats$rmse <- sqrt(mean(fit$residuals^2))
+    stats$var_ratio <- var(fit$model[, 1])/var(fitted(fit))
   } else if (inherits(fit, "numeric")) {
+    # Handle wind direction "fit", which is a single offset value
     int <- which.max(fit) - 1
-    list(
-      frac_hh = sum(complete.cases(x, y))/n_hh,
-      slope = 1,
-      int = int,
-      r2 = cor((x + int) %% 360, y, use = "pairwise.complete.obs")^2,
-      rmse = NA,
-      var_ratio = NA,
-      n_used = 0
-    )
+    stats$slope <- 1
+    stats$int <- int
+    stats$r2 <- cor((x + int) %% 360, y, use = "pairwise.complete.obs")^2
   }
+  
+  stats
 }
 

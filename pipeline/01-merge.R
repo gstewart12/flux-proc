@@ -1,4 +1,4 @@
-# Prepare for post-processing --------------------------------------------------
+# Merge EddyPro output by year -------------------------------------------------
 
 # Purpose: 
 # Combine output from different EddyPro runs, check formatting, add external 
@@ -11,14 +11,18 @@ library("readxl")
 library("tidyverse")
 
 # Load custom functions
-source("source/pipeline-funs.R")
+source("R/pipeline-funs.R")
 
 ## Initialize script settings & documentation ----------------------------------
 
-site <- "JLR" # three-letter site code
-year <- 2023 # a single year to process
 data_dir <- file.path("data", site) # path to directory containing all data
 output_dir <- file.path("output", site, year) # where to write output
+
+# If first time running site/year, need to create output directory
+if (!dir.exists(output_dir)) dir.create(output_dir)
+
+# Load configuration file
+cfg <- read_yaml("config.yml")
 
 ## Read and combine the EddyPro files ------------------------------------------
 
@@ -27,7 +31,7 @@ biomet_files <- get_eddypro_files_year(data_dir, year, type = "biomet")
 
 # Read data files
 skip_cols <- c("VERSION_1_1_1", "_0_0_1") # these cause errors and have no data
-na_vals <- c("-9999", "9999", "9999.99") # read these as NA
+na_vals <- cfg$merge$na_vals # read these as NA
 data <- data_files |>
   map(\(x) read_csv(x, na = na_vals, col_select = -any_of(skip_cols))) |>
   bind_rows() |>
@@ -35,6 +39,21 @@ data <- data_files |>
   filter(str_sub(TIMESTAMP_START, 1, 4) == year) |>
   arrange(TIMESTAMP_START)
 # Note: parsing problems come from skipped cols and are safe to ignore
+
+# Handle edge case - two versions of the same column (duplicate names)
+dupe_cols <- str_subset(names(data), "\\.{3}")
+if (length(dupe_cols)) {
+  dupe_col_stems <- str_remove(dupe_cols, "\\.{3}.+")
+  for (col in unique(dupe_col_stems)) {
+    dupe_col_data <- data |>
+      select(all_of(c(col, dupe_cols[str_starts(dupe_cols, col)]))) |>
+      as.list()
+    # Merge duplicates with original
+    data[[col]] <- coalesce(!!!dupe_col_data)
+    # Remove duplicate versions
+    data <- select(data, -all_of(dupe_cols[str_starts(dupe_cols, col)]))
+  }
+}
 
 merged <- data
 
@@ -95,7 +114,6 @@ if (length(rec_data_files) > 0) {
     rename_with(\(x) str_replace(x, "SW", "SW_"), -starts_with("SWC")) |>
     rename_with(\(x) str_replace(x, "PPFD_1", "PPFD_IN_1")) |>
     rename_with(\(x) str_replace(x, "RN_1", "NETRAD_1")) |>
-    # rename(PPFD_IN_1_1_1 = PPFD_1_1_1, NETRAD_1_1_1 = RN_1_1_1) |>
     # Summaries have EddyPro units, so need to convert to Fluxnet
     mutate(
       across(starts_with("SWC"), \(x) x * 100),
@@ -104,14 +122,12 @@ if (length(rec_data_files) > 0) {
       PA_EP = PA_EP/1000,
       across(c(VPD_EP, starts_with("VAPOR_PARTIAL")), \(x) x/100),
       across(starts_with("P_RAIN"), \(x) x * 1000)
-      # P_RAIN_1_1_1 = P_RAIN_1_1_1 * 1000
     )
   # Recovered because no GHG files available, so these are new rows
   merged <- rows_insert(
     merged, rec_data, by = c("TIMESTAMP_START", "TIMESTAMP_END"), 
     conflict = "ignore"
   )
-  
 }
 
 # Check if any recovered biomet files exist
@@ -136,6 +152,7 @@ if (length(rec_biomet_files) > 0) {
     rename_with(\(x) str_replace(x, "SW", "SW_"), -starts_with("SWC")) |>
     rename(PPFD_IN_1_1_1 = PPFD_1_1_1, NETRAD_1_1_1 = RN_1_1_1) |>
     mutate(across(starts_with("SWC"), \(x) x * 100))
+  
   # Recovered because EddyPro skipped GHG files, so these rows are patched
   merged <- rows_patch(
     merged, rec_biomet, by = c("TIMESTAMP_START", "TIMESTAMP_END"), 
@@ -151,8 +168,14 @@ merged <- select(
   merged,
   -contains("NONE"), -contains("LI7200"), -contains("TUBE"), -contains("CELL"), 
   -contains("H_BU"), -contains("KRYPTON"), -contains("IBROM"),
-  -contains("CH4_TC"), -contains("SHFSENS"), -INST_LI7700_RSSI, -ROT_ROLL,
-  -CUSTOM_U_MEAN, -CUSTOM_V_MEAN, -CUSTOM_W_MEAN, -CUSTOM_TS_MEAN
+  -contains("CH4_TC"), -contains("SHFSENS"), -contains("CUSTOM_CH4_AUX"),
+  -contains("CUSTOM_AUXILIARY_INPUT"),
+  -any_of(
+    c(
+      "INST_LI7700_RSSI", "ROT_ROLL", 
+      "CUSTOM_U_MEAN", "CUSTOM_V_MEAN", "CUSTOM_W_MEAN", "CUSTOM_TS_MEAN"
+    )
+  )
 )
 dropped_cols <- c(setdiff(names(data), names(merged)), tolower(skip_cols))
 
@@ -172,7 +195,7 @@ n_empty <- nrow(merged) - nrow(data)
 
 ## Join external data sources --------------------------------------------------
 
-### ERA variables
+### ERA variables ----
 
 era5_file <- glue("output/ERA5/era5-sl-{year}-hh.csv")
 
@@ -189,33 +212,9 @@ merged <- left_join(merged, blh)
 merged_file <- glue("eddypro_{site}-{year}_fluxnet_adv_merged.csv")
 write_csv(merged, file.path(output_dir, merged_file))
 
-# Subset of variables required for processing/analysis ("essentials")
-# TODO: this would be good, but choose essential vars not remove unessential ones
-# merged |>
-#   select(
-#     -ends_with("VADV"), -ends_with("MEDIAN"), -ends_with("P25"), 
-#     -ends_with("P75"), -ends_with("_UNCORR"), -ends_with("STAGE1"), 
-#     -ends_with("STAGE2"), -ends_with("_CORRDIFF"), -ends_with("_NSR"),
-#     -ends_with("_SS"), -ends_with("_ITC"), 
-#     -starts_with("LOGGER_"), -starts_with("BADM"), -starts_with("HPATH"),
-#     -starts_with("VPATH"), -starts_with("MANUFACTURER"), 
-#     -starts_with("RESPONSE_TIME"), -ends_with("_METHOD"), -ends_with("_SS_TEST"), 
-#     -ends_with("_ITC_TEST"), -starts_with("SPEC_CORR_LI7700"), 
-#     -contains("AUXILIARY"), -contains("_AUX-"), -ends_with("TLAG_MIN"),
-#     -ends_with("TLAG_MAX"), -ends_with("TLAG_NOMINAL"),
-#     -ends_with("MIXING_RATIO"), -ends_with("MOLAR_DENSITY"), 
-#     -starts_with("INST_LI7700"), -ends_with("MEAS_TYPE"), -WBOOST_APPLIED,
-#     -DENTRENDING_TIME_CONSTANT, -WPL_APPLIED, -FOOTPRINT_MODEL, 
-#     -DISPLACEMENT_HEIGHT, -ROUGHNESS_LENGTH, -FILE_TIME_DURATION, 
-#     -NUM_CUSTOM_VARS, -INST_LI7500_CHOPPER, -INST_LI7500_DETECTOR,
-#     -INST_LI7500_PLL, -INST_LI7500_SYNC, -CUSTOM_VIN_SF_MEAN, -CUSTOM_CO2_MEAN,
-#     -CUSTOM_H2O_MEAN, -CUSTOM_DEW_POINT_MEAN, -CUSTOM_CH4_MEAN, 
-#     -NUM_BIOMET_VARS, -CUSTOM_FILTER_NR, -WD_FILTER_NR, -starts_with("DRYAIR"),
-#     -VAPOR_DRYAIR_RATIO, -AIR_RHO_CP, -SPECIFIC_HEAT_EVAP
-#   ) |>
-#   names()
+# TODO: Subset essential variables (required for processing/analysis)
 # essentials <- select(
-#   merged
+#   merged, ...
 # )
 # essentials_file <- glue("eddypro_{site}-{year}_fluxnet_adv_merged_essentials.csv")
 # write_csv(essentials, file.path(output_dir, essentials_file))
@@ -223,7 +222,7 @@ write_csv(merged, file.path(output_dir, merged_file))
 # Documentation
 write_lines(
   c(
-    "EddyPro output files merged via '01-merge-eddypro.R'",
+    "EddyPro output files merged via '01-merge.R'",
     "",
     "EddyPro file(s) merged",
     glue("  - {data_files}"),
@@ -247,6 +246,3 @@ write_lines(
   ),
   file.path(output_dir, str_replace(merged_file, "\\.csv", "\\.txt"))
 )
-
-
-
