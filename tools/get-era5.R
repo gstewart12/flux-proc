@@ -5,24 +5,39 @@ library("glue")
 library("tidyverse")
 library("ecmwfr")
 
-area <- "39.10/-75.80/39.05/-75.75" # these bounds (N/W/S/E) include all sites
-era_vars <- c(
-  "10m_u_component_of_wind", 
-  "10m_v_component_of_wind", 
-  "2m_dewpoint_temperature", 
-  "2m_temperature", 
-  "boundary_layer_height",
-  "mean_total_precipitation_rate", 
-  "mean_surface_downward_long_wave_radiation_flux",
-  "mean_surface_downward_short_wave_radiation_flux",
-  "mean_surface_net_long_wave_radiation_flux",
-  "mean_surface_net_short_wave_radiation_flux",
-  "surface_pressure",
-  "mean_surface_sensible_heat_flux",
-  "mean_surface_latent_heat_flux",
-  "friction_velocity",
-  glue("volumetric_soil_water_layer_{c(1,2,3,4)}"),
-  glue("soil_temperature_level_{c(1,2,3,4)}")
+# Set token to local keychain
+# Requires an ECMWF account 
+# 1. Register at https://www.ecmwf.int/user/login
+# 2. Get API token from CDS https://cds.climate.copernicus.eu/profile
+# 3. Add token to keychain:
+# wf_set_key(key = "")
+#    OR input key interactively:
+# wf_set_key()
+# more info on setting up API here: https://cds.climate.copernicus.eu/how-to-api
+
+area <- c(39.10, -75.80, 39.05, -75.75) # (N, W, S, E) includes all sites
+
+era_vars <- list(
+  instant = c(
+    "10m_u_component_of_wind", 
+    "10m_v_component_of_wind", 
+    "2m_dewpoint_temperature", 
+    "2m_temperature", 
+    "surface_pressure",
+    "friction_velocity",
+    glue("volumetric_soil_water_layer_{c(1,2,3,4)}"),
+    glue("soil_temperature_level_{c(1,2,3,4)}"),
+    "boundary_layer_height"
+  ),
+  average = c(
+    "mean_total_precipitation_rate", 
+    "mean_surface_downward_long_wave_radiation_flux",
+    "mean_surface_downward_short_wave_radiation_flux",
+    "mean_surface_net_long_wave_radiation_flux",
+    "mean_surface_net_short_wave_radiation_flux",
+    "mean_surface_sensible_heat_flux",
+    "mean_surface_latent_heat_flux"
+  )
 )
 
 
@@ -31,85 +46,122 @@ era_vars <- c(
 # Set ERA5 data directory
 era_dir <- "data/ERA5"
 
-# Set token to local keychain
-wf_set_key(service = "cds") # open a browser window, enter key interactively
-# Or enter credentials directly:
-# wf_set_key(
-#   user = "", 
-#   key = "", 
-#   service = "cds"
-# )
-
-year <- 2024
+year <- 2025
 
 # Create data query/queries
 req <- list(
   dataset_short_name = "reanalysis-era5-single-levels",
   product_type = "reanalysis",
-  format = "netcdf",
-  variable = era_vars,
-  time = c(
-    "00:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "07:00", 
-    "08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", 
-    "16:00", "17:00", "18:00", "19:00", "20:00", "21:00", "22:00", "23:00"
-  ),
+  # variable = era_vars,
   date = paste0(year, "-01-01/", year, "-12-31"),
+  time = paste0(str_pad(0:23, 2, pad = "0"), ":00"),
+  data_format = "netcdf",
+  download_format = "unarchived",
   area = area,
   target = paste0("era5-sl-", year, ".nc")
 )
 
-# Check size of request, split into multiple if needed
-req_size_limit <- 60000 # note this was lowered from 120000 to 60000
-req_size <- prod(
-  length(req$time), 
-  as.numeric(as.duration(interval(req$date)), "days"),
-  length(era_vars)
+reqs <- map_depth(
+  era_vars, 2, \(x) assign_in(req, "variable", x), .ragged = TRUE
 )
-if (req_size > req_size_limit) {
-  req_max_vars <- req_size_limit %/% (req_size/length(era_vars))
-  n_reqs <- length(era_vars) %/% req_max_vars + 1
-  req_vars <- split(era_vars, cut(seq_along(era_vars), n_reqs, labels = FALSE))
-  reqs <- req_vars |> 
-    map(\(x) assign_in(req, "variable", x)) |> 
-    imap(
-      \(x, i) modify_in(
-        x, "target", \(y) str_replace(y, "\\.", str_c("-", i, "."))
-      )
-    )
-} else {
-  reqs <- list(req)
-}
+reqs$instant <- map2(
+  reqs$instant, 1:length(reqs$instant),
+  \(x, i) modify_in(
+    x, "target", 
+    \(y) str_replace(y, "\\.", str_c("-", str_pad(i, 2, pad = "0"), "."))
+  )
+)
+reqs$average <- map2(
+  reqs$average, 1:length(reqs$average) + length(reqs$instant),
+  \(x, i) modify_in(
+    x, "target", 
+    \(y) str_replace(y, "\\.", str_c("-", str_pad(i, 2, pad = "0"), "."))
+  )
+)
 
-# Request the data - don't download yet, may take a while to process
-files <- map(reqs, \(x) wf_request(x, user = "23795", transfer = FALSE))
+# Check size of request, split into multiple if needed
+# req_size_limit <- 120000
+# Handle instants and averages separately - cannot be mixed in a single request
+# reqs <- list()
+# for (i in 1:length(era_vars)) {
+#   vars <- era_vars[[i]]
+#   req_size <- prod(
+#     length(req$time),
+#     as.numeric(as.duration(interval(req$date)), "days"),
+#     length(vars),
+#     6 # correction factor for when request size suddenly grew 6x
+#   )
+#   req_max_vars <- req_size_limit %/% (req_size/length(vars))
+#   n_reqs <- ceiling(length(vars)/req_max_vars)
+#   req_vars <- split(vars, cut(seq_along(vars), n_reqs, labels = FALSE))
+#   reqs[[names(era_vars[i])]] <- req_vars |>
+#     unname() |>
+#     map(\(x) assign_in(req, "variable", x))
+# }
+# reqs <- reqs |>
+#   list_c() |>
+#   imap(
+#     \(x, i) modify_in(
+#       x, "target", 
+#       \(y) str_replace(y, "\\.", str_c("-", str_pad(i, 2, pad = "0"), "."))
+#     )
+#   )
+
+# Split requests into two batches - ECMWF allows max 20 at once
+batches <- list()
+req_files <- list()
+
+# First batch: instants
+# Request the data - don't download yet, takes a while to process
+batches$instant <- map(reqs$instant, \(x) wf_request(x, transfer = FALSE))
 
 # Add request IDs to queries and save
-reqs <- map2(reqs, files, \(x, y) append(x, list(url = y$get_url())))
-req_files <- reqs |>
+reqs$instant <- map2(
+  reqs$instant, batches$instant, \(x, y) append(x, list(url = y$get_url()))
+)
+req_files$instant <- reqs$instant |>
   map("target") |>
   map(\(x) str_replace(x, "\\.nc", "-req.json"))
-walk2(reqs, req_files, \(x, y) write_json(x, file.path(era_dir, y)))
+walk2(
+  reqs$instant, req_files$instant, \(x, y) write_json(x, file.path(era_dir, y))
+)
 
-dseconds(0.038) * req_size # Est. processing time (from 10 reps)
+# STOP, wait here until first batch is ready
+# Check status: https://cds.climate.copernicus.eu/requests?tab=all
+dminutes(9.5 * length(batches$instant)) # est. processing time (mins)
 
-# STOP HERE
+# Second batch: averages
+# Request the data - don't download yet, takes a while to process
+batches$average <- map(reqs$average, \(x) wf_request(x, transfer = FALSE))
+
+# Add request IDs to queries and save
+reqs$average <- map2(
+  reqs$average, batches$average, \(x, y) append(x, list(url = y$get_url()))
+)
+req_files$average <- reqs$average |>
+  map("target") |>
+  map(\(x) str_replace(x, "\\.nc", "-req.json"))
+walk2(
+  reqs$average, req_files$average, \(x, y) write_json(x, file.path(era_dir, y))
+)
+
+# STOP, wait here until second batch is ready
+# Check status: https://cds.climate.copernicus.eu/requests?tab=all
+dminutes(9.5 * length(batches$average)) # est. processing time (mins)
 
 # Download requested data ------------------------------------------------------
 
-# Check status: https://cds.climate.copernicus.eu/cdsapp#!/yourrequests
+# Check status: https://cds.climate.copernicus.eu/requests?tab=all
 
-reqs <- map(
-  list.files(era_dir, glue("{year}(-\\d)*-req"), full.names = TRUE), 
-  \(x) read_json(x, simplifyVector = TRUE)
-)
+reqs <- era_dir |>
+  list.files(glue("{year}(-\\d{{1,2}})*-req"), full.names = TRUE) |>
+  map(\(x) read_json(x, simplifyVector = TRUE))
 walk(
   reqs,
   \(x) wf_transfer(
     url = x$url, 
-    user = "23795",
     path = era_dir, 
-    filename = x$target, 
-    service = "cds"
+    filename = x$target
   )
 )
 
@@ -120,7 +172,7 @@ nc_files <- list.files(era_dir, pattern = ".nc", full.names = TRUE)
 nc_data <- nc_files |> 
   as.list() |>
   # Group files by year
-  split(str_sub(nc_files, -9, -6)) |>
+  split(str_extract(nc_files, "(\\d{4})")) |>
   map_depth(2, quietly(stars::read_ncdf)) |>
   modify_depth(2, "result") |>
   map_depth(2, as_tibble) |>
@@ -131,21 +183,32 @@ nc_data <- nc_files |>
   map(\(x) select(x, -any_of("expver"))) |>
   # Join all years
   bind_rows() |>
+  mutate(
+    time = coalesce(time, valid_time),
+    mtpr = coalesce(mtpr, avg_tprate),
+    msdwlwrf = coalesce(msdwlwrf, avg_sdlwrf),
+    msdwswrf = coalesce(msdwswrf, avg_sdswrf),
+    msnlwrf = coalesce(msnlwrf, avg_snlwrf),
+    msnswrf = coalesce(msnswrf, avg_snswrf),
+    msshf = coalesce(msshf, avg_ishf),
+    mslhf = coalesce(mslhf, avg_slhtf),
+    .keep = "unused"
+  ) |>
   drop_na() |>
   select(-longitude, -latitude) |>
   distinct(time, .keep_all = TRUE) |>
   arrange(time)
 
 # Look at variable attributes
-nc_files |>
-  map(ncmeta::nc_atts) |>
-  map(\(x) select(x, -id)) |>
-  map(\(x) mutate(x, value = map_chr(value, as.character))) |>
-  map(pivot_wider) |>
-  bind_rows() |>
-  type_convert(col_types = cols()) |>
-  distinct(variable, .keep_all = TRUE) |>
-  print(n = 30)
+# nc_files |>
+#   map(ncmeta::nc_atts) |>
+#   map(\(x) select(x, -id)) |>
+#   map(\(x) mutate(x, value = map_chr(value, as.character))) |>
+#   map(pivot_wider) |>
+#   bind_rows() |>
+#   type_convert(col_types = cols()) |>
+#   distinct(variable, .keep_all = TRUE) |>
+#   print(n = 30)
 
 # Upsample to flux tower time step
 time_hh <- seq(
@@ -228,7 +291,7 @@ era_data_hh <- nc_data_hh |>
 
 # Visual checks
 era_data_hh |>
-  ggplot(aes(TIMESTAMP, P_RAIN)) +
+  ggplot(aes(TIMESTAMP, TA)) +
   geom_line()
 
 # Write processed ERA5 data to files (yearly)
