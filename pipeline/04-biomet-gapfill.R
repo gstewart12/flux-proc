@@ -10,16 +10,27 @@ library("glue")
 library("tidyverse")
 
 # Load custom functions
-source("source/pipeline-funs.R")
+source("R/pipeline-funs.R")
 
 ## Initialize script settings & documentation ----------------------------------
 
-site <- "JLR" # three-letter site code
-years <- 2019:2023 # years to process
+if (interactive()) {
+  site <- "JLA" # three-letter site code
+  years <- 2019:2025 # years to process
+}
+# years <- 2019:2025
+
 output_dirs <- file.path("output", site, years) # where to write output
+report_dir <- file.path("reports", site) # where to save reports
 
 # Load metadata file
 md <- read_yaml(file.path("data", site, "metadata.yml"))
+
+# Load variable info file
+vars <- read_yaml("config/var-config.yml")
+
+# Load configuration file
+cfg <- read_yaml("config/config.yml")
 
 # Set configuration options
 na_frac <- 0.5 # min % available points for valid de-biasing coefs
@@ -28,29 +39,36 @@ max_interp <- 3 # max gap length for linear interpolation
 precip_thr <- 0.1 # >0 since ERA interpolation can create tiny values
 
 # Biomet vars to be filled
-vars <- c(
-  "TA", "PA", "RH", "VPD", "WS", "WD", "USTAR", "PPFD_IN", "SW_IN", "SW_OUT", 
-  "LW_IN", "LW_OUT", "NETRAD", "P_RAIN", "G", "TS", "SWC"
-)
-soil_vars <- c("G", "SWC", "TS")
+gf_vars <- cfg$met_vars
+soil_vars <- cfg$biomet_gapfill$soil_vars
 
 ## Read required data files ----------------------------------------------------
 
 # Quality-controlled data
 data_files <- glue("eddypro_{site}-{years}_fluxnet_adv_qaqc.csv")
 
-data <- read_csv(file.path(output_dirs, data_files))
+# data <- read_csv(file.path(output_dirs, data_files))
+data <- output_dirs |>
+  file.path(data_files) |>
+  map(read_csv) |>
+  bind_rows()
 
 # Alternative site data (quality-controlled)
-sites <- c("JLA", "JLN", "JLR")
+sites <- cfg$sites
 alt_sites <- sites[sites != site]
 alt_dirs <- map(alt_sites, \(x) file.path("output", x, years))
 alt_files <- map(
   alt_sites, \(x) glue("eddypro_{x}-{years}_fluxnet_adv_qaqc.csv")
 )
+# alt_data <- alt_dirs |> 
+#   map2(alt_files, \(x, y) file.path(x, y)) |>
+#   map(read_csv) |>
+#   set_names(alt_sites)
 alt_data <- alt_dirs |> 
   map2(alt_files, \(x, y) file.path(x, y)) |>
-  map(read_csv) |>
+  map(as.list) |>
+  map_depth(2, read_csv) |>
+  map(bind_rows) |>
   set_names(alt_sites)
 
 # ERA data
@@ -58,9 +76,9 @@ era <- read_csv(glue("output/ERA5/era5-sl-{years}-hh.csv"))
 
 ## Clean biomet vars with QC flags ---------------------------------------------
 
-cleaned <- vars |>
+cleaned <- gf_vars |>
   map2(
-    glue("QC_{vars}"),
+    glue("QC_{gf_vars}"),
     \(x, y) transmute(data, "{x}" := if_else(.data[[y]] == 2, NA, .data[[x]]))
   ) |>
   bind_cols() |>
@@ -68,14 +86,16 @@ cleaned <- vars |>
   mutate(TIMESTAMP = data$TIMESTAMP, .before = 1)
 
 # Data coverage plot
+# TODO: compress these somehow; too much vector going on
 coverage_plot <- cleaned |>
   pivot_longer(-TIMESTAMP) |>
-  drop_na() |>
+  # drop_na() |>
+  mutate(coverage = as.integer(!is.na(value))) |>
   nest_by(year = year(TIMESTAMP)) |>
   mutate(
     plot = list(
       data |>
-        ggplot(aes(TIMESTAMP, name, fill = name)) +
+        ggplot(aes(TIMESTAMP, name, fill = name, alpha = coverage)) +
         geom_tile(height = 0.25, show.legend = FALSE) +
         labs(x = NULL, y = NULL, title = year)
     )
@@ -86,7 +106,7 @@ alt_cleaned <- alt_data |>
   # Clean vars with their QC flags
   map(
     \(d) map2(
-      vars, glue("QC_{vars}"),
+      gf_vars, glue("QC_{gf_vars}"),
       \(x, y) transmute(d, "{x}" := if_else(.data[[y]] == 2, NA, .data[[x]]))
     )
   ) |>
@@ -99,7 +119,7 @@ alt_cleaned <- alt_data |>
 
 # Select focal ERA vars and add levels to single-level vars
 era_cleaned <- era |>
-  select(TIMESTAMP, starts_with(vars)) |> 
+  select(TIMESTAMP, starts_with(gf_vars)) |> 
   rename_with(\(x) paste0(x, "_1"), c(-TIMESTAMP, -matches("_\\d"))) |>
   # Add intermediate levels
   mutate(
@@ -123,11 +143,11 @@ alt <- c(alt_cleaned, list(ERA = era_cleaned))
 win_ref <- factor(quarter(data$TIMESTAMP, "year.quarter"))
 windows <- unique(win_ref)
 
-debiased <- setNames(vector("list", length(vars)), vars)
-fit_results <- setNames(vector("list", length(vars)), vars)
+debiased <- setNames(vector("list", length(gf_vars)), gf_vars)
+fit_results <- setNames(vector("list", length(gf_vars)), gf_vars)
 
 # setdiff(vars, soil_vars)
-for (var in vars) {
+for (var in gf_vars) {
   
   # (var*window):source:level
   var_data <- cleaned[[var]]
@@ -153,7 +173,7 @@ for (var in vars) {
       # Subset data within window
       var_win <- var_data[win_src]
       alt_win <- var_src[win_src]
-
+      
       # 2. Remove phase difference
       lag_src <- get_best_lag(alt_win, var_win)
       alt_lag <- apply_lag(alt_win, lag_src)
@@ -161,10 +181,14 @@ for (var in vars) {
       alt_lag <- zoo::na.approx(alt_lag, rule = 2, maxgap = abs(lag_src))
       
       # 3. Correct bias - type of fit depends on var
-      if (var %in% c("VPD", "WS", "USTAR", "PPFD_IN", "SW_IN", "P_RAIN")) {
+      if (!any(complete.cases(var_win, alt_lag))) {
+        # First check if fit exists
+        fit <- NA
+      } else if (var %in% cfg$biomet_gapfill$lm0_vars) {
         # Linear regression - forced through (0, 0)
         fit <- lm(var_win ~ 0 + alt_lag)
       } else if (var == "RH") {
+        # Slightly different fit method for ERA vs. alt source
         if (str_starts(src, "ERA")) {
           # Regular linear regression
           fit <- lm(var_win ~ alt_lag)
@@ -193,7 +217,6 @@ for (var in vars) {
       
       # Simple ratio used for precip slope
       if (var == "P_RAIN") {
-        # fit_stats$slope <- 1
         cc <- complete.cases(var_win, alt_lag)
         fit_stats$slope <- sum(var_win[cc])/sum(alt_lag[cc])
         fit_stats$int <- 0
@@ -269,7 +292,6 @@ debiased_df <- debiased |>
   map(list_c) |>
   bind_cols() |>
   rename_with(\(x) paste0(x, "_ALT"))
-  # mutate(TIMESTAMP = cleaned$TIMESTAMP, .before = 1)
 
 cleaned |>
   mutate(G = zoo::na.approx(G, na.rm = FALSE, maxgap = max_interp)) |>
@@ -292,10 +314,11 @@ cleaned |>
 
 ### Linear interpolation ----
 
-interp_filled <- setNames(vector("list", length(vars)), paste0(vars, "_LI"))
-for (i in seq_along(vars)) {
+interp_filled <- vector("list", length(gf_vars))
+names(interp_filled) <- paste0(gf_vars, "_LI")
+for (i in seq_along(gf_vars)) {
   interp_filled[[i]] <- zoo::na.approx(
-    cleaned[[vars[i]]], na.rm = FALSE, maxgap = max_interp
+    cleaned[[gf_vars[i]]], na.rm = FALSE, maxgap = max_interp
   )
 }
 
@@ -303,7 +326,6 @@ for (i in seq_along(vars)) {
 
 # For highly autocorrelated site-specific soil vars 
 
-# soil_vars <- c("G", "TS", "SWC")
 # kalman_filled <- soil_vars |>
 #   map(
 #     \(x) imputeTS::na_kalman(
@@ -315,10 +337,9 @@ for (i in seq_along(vars)) {
 
 ### Mean diurnal course & look up table ----
 
-mds_vars <- c(
-  "TA", "SW_IN", "VPD", "USTAR", "LW_IN", "LW_OUT", "G", "TS", "SWC"
-)
-# ONEflux does TA, SW_IN, LW_IN, VPD, CO2, TS, SWC
+mds_vars <- vars |> 
+  keep(\(x) "MDS" %in% x$gapfill) |>
+  names()
 
 cleaned_reddyproc <- cleaned |>
   mutate(TIMESTAMP = TIMESTAMP + minutes(15)) |>
@@ -328,14 +349,21 @@ mds <- sEddyProc$new(site, cleaned_reddyproc, mds_vars, "TIMESTAMP")
 
 for (var in mds_vars) {
   mds$sMDSGapFill(
-    var, QFVar = "none", QFValue = NA, V1 = "SW_IN", V2 = "VPD", V3 = "TA",
-    FillAll = FALSE, isVerbose = FALSE
+    var, 
+    QFVar = "none", 
+    QFValue = NA, 
+    V1 = "SW_IN", 
+    V2 = "VPD", 
+    V3 = "TA",
+    FillAll = FALSE, 
+    isVerbose = FALSE
   )
 }
 
 # Set filled vars to NA if poor quality (FQC = 2 or 3)
 mds_results <- mds$sExportResults()
-mds_filled <- setNames(vector("list", length(mds_vars)), paste0(mds_vars, "_MDS"))
+mds_filled <- vector("list", length(mds_vars))
+names(mds_filled) <- paste0(mds_vars, "_MDS")
 for (i in seq_along(mds_vars)) {
   mds_filled[[i]] <- if_else(
     mds_results[[paste0(mds_vars[i], "_fqc")]] > 1, 
@@ -348,27 +376,16 @@ for (i in seq_along(mds_vars)) {
 
 ### Gather de-biased & filled vars ----
 
-filled <- cleaned |>
-  bind_cols(debiased_df, bind_cols(interp_filled), bind_cols(mds_filled)) |>
-  transmute(
-    TA_F = coalesce(TA_LI, TA_ALT, TA_MDS),
-    PA_F = coalesce(PA_LI, PA_ALT),
-    RH_F = coalesce(RH_LI, RH_ALT),
-    VPD_F = coalesce(VPD_LI, VPD_ALT, VPD_MDS),
-    WS_F = coalesce(WS_LI, WS_ALT),
-    WD_F = coalesce(WD, WD_ALT),
-    USTAR_F = coalesce(USTAR_LI, USTAR_MDS, USTAR_ALT),
-    PPFD_IN_F = coalesce(PPFD_IN, PPFD_IN_ALT),
-    SW_IN_F = coalesce(SW_IN, SW_IN_ALT, SW_IN_MDS),
-    SW_OUT_F = coalesce(SW_OUT, SW_OUT_ALT),
-    LW_IN_F = coalesce(LW_IN_MDS, LW_IN_ALT),
-    LW_OUT_F = coalesce(LW_OUT_MDS, LW_OUT_ALT),
-    NETRAD_F = coalesce(NETRAD_LI, NETRAD_ALT),
-    P_RAIN_F = coalesce(P_RAIN, P_RAIN_ALT),
-    G_F = coalesce(G_LI, G_MDS, G_ALT),
-    TS_F = coalesce(TS_LI, TS_MDS, TS_ALT),
-    SWC_F = coalesce(SWC_LI, SWC_MDS, SWC_ALT)
-  )
+filled <- bind_cols(
+  cleaned, debiased_df, bind_cols(interp_filled), bind_cols(mds_filled)
+)
+for (var in gf_vars) {
+  fill_seq <- c(var, paste0(var, "_", vars[[var]]$gapfill))
+  fill_data <- as.list(filled[, fill_seq])
+  var_filled <- coalesce(!!!fill_data)
+  filled[[paste0(var, "_F")]] <- var_filled
+}
+filled <- select(filled, ends_with("_F"))
 
 nrow(filled) == nrow(drop_na(filled)) # should be TRUE
 map_lgl(filled, anyNA) # should all be FALSE
@@ -384,10 +401,11 @@ filled$QC_LE <- combn_QC(as.data.frame(data), c("QC_LE", "QC_PRECIP_F"))
 filled$QC_FC <- combn_QC(as.data.frame(data), c("QC_FC", "QC_PRECIP_F"))
 
 # Save PDF of time series plots showing gap-filled sections
-pdf(glue("reports/metgf_plots_{site}.pdf"))
+report_file <- glue("metgf_plots_{site}.pdf")
+pdf(file.path(report_dir, report_file))
 coverage_plot
 map(
-  vars,
+  gf_vars,
   \(x) cleaned |>
     ggplot(aes(TIMESTAMP)) +
     geom_line(
