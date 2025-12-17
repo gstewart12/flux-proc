@@ -2,8 +2,6 @@
 
 # Purpose: 
 
-# TODO: store parameters in external file
-
 # Load the required packages
 library("remotes")
 if (!require("openeddy")) {
@@ -13,28 +11,33 @@ library("yaml")
 library("glue")
 library("tidyverse")
 
-source("source/flag-spikes.R")
+# Load custom functions
+source("R/pipeline-funs.R")
+source("R/flag-spikes.R")
 
 ## Initialize script settings & documentation ----------------------------------
 
-site <- "JLR" # three-letter site code
-year <- 2023 # a single year to process
+data_dir <- file.path("data", site) # path to directory containing all data
 output_dir <- file.path("output", site, year) # where to write output
+report_dir <- file.path("reports", site) # where to save reports
 
 # Load metadata file
-md <- read_yaml(file.path("data", site, "metadata.yml"))
+md <- read_yaml(file.path(data_dir, "metadata.yml"))
 
-# Load variable info file
-vars <- read_yaml("var-info.yml")
+# Load general configuration
+cfg <- read_yaml("config/config.yml")
+
+# Load variable configuration
+vars <- read_yaml("config/var-config.yml")
 
 # Set configuration options
-mvc_dist_thr <- 5
-rad_dist_thr <- 50
-night_thr <- 20 # change to 50?
-agc_min <- 70 # min LI-7500 (CO2/H2O) signal strength
-rssi_min <- 10 # min LI-7700 (CH4) signal strength
-scf_max <- 2 # max spectral correction factor
-rain_thr <- 0 # max rainfall for data depending on LI-7500
+mvc_dist_thr <- cfg$qc_auto$mvc_dist_thr
+rad_dist_thr <- cfg$qc_auto$rad_dist_thr
+night_thr <- cfg$qc_auto$night_thr
+agc_min <- cfg$qc_auto$agc_min
+rssi_min <- cfg$qc_auto$rssi_min
+scf_max <- cfg$qc_auto$scf_max
+rain_thr <- cfg$qc_auto$rain_thr
 
 ## Read corrected data file ----------------------------------------------------
 
@@ -42,38 +45,44 @@ data_file <- glue("eddypro_{site}-{year}_fluxnet_adv_corrected.csv")
 
 data <- read_csv(file.path(output_dir, data_file))
 
+## Create diagnostic plots for manual inspection -------------------------------
+
+# Select subset of variables for diagnostics
+dep_vars <- vars[cfg$dep_vars]
+
+flux_vars <- vars[cfg$flux_vars]
+
+# Save PDF of time series plots showing dependencies
+
+dep_report_file <- glue("qc_dependencies_{site}-{year}.pdf")
+pdf(file.path(report_dir, dep_report_file), width = 11, height = 8.5)
+
+for (var in names(dep_vars)) {
+  data |> 
+    rename(timestamp = TIMESTAMP) |> 
+    mutate("{var}" := structure(.data[[var]], units = vars[[var]]$units)) |>
+    as.data.frame() |> 
+    plot_precheck(var)
+}
+
+dev.off()
+
 ## Perform QC checks on dependencies -------------------------------------------
 
 cleaned <- data
 
-### Plausible limits ----
-
-na_if_outside <- function(x, left, right) {
-  if_else(between(x, left, right), x, NA_real_)
-}
+### Physical limits ----
 
 # Dependencies are cleaned directly
 
-# TODO: load these from external file
+# Get dependencies with defined plausible limits
+dep_lims <- map(dep_vars, "phys_lims")
 
-cleaned <- cleaned |>
-  mutate(
-    T_SONIC = na_if_outside(T_SONIC, -20, 50),
-    T_SONIC_SIGMA = na_if_outside(T_SONIC_SIGMA, 0, 2),
-    U_UNROT = na_if_outside(U_UNROT, -15, 15),
-    U_SIGMA = na_if_outside(U_SIGMA, 0, 5),
-    V_UNROT = na_if_outside(V_UNROT, -15, 15),
-    V_SIGMA = na_if_outside(V_SIGMA, 0, 3),
-    W_UNROT = na_if_outside(W_UNROT, -0.7, 0.7),
-    W_SIGMA = na_if_outside(W_SIGMA, 0, 1.5),
-    ROT_PITCH = na_if_outside(ROT_PITCH, -30, 30), # second axis rotation angle
-    H2O = na_if_outside(H2O, 0, 45),
-    H2O_SIGMA = na_if_outside(H2O_SIGMA, 0, 100),
-    CO2 = na_if_outside(CO2, 250, 1000),
-    CO2_SIGMA = na_if_outside(CO2_SIGMA, 0, 1.5),
-    CH4 = na_if_outside(CH4, 0, 15),
-    CH4_SIGMA = na_if_outside(CH4_SIGMA, 0, 0.025)
-  )
+# Remove values outside limits
+for (var in names(dep_lims)) {
+  lim <- dep_lims[[var]]
+  cleaned[[var]] <- na_if_outside(cleaned[[var]], lim[1], lim[2])
+}
 
 ### Spikes ----
 
@@ -81,28 +90,29 @@ cleaned <- cleaned |>
 
 ### Combine dependencies by instrument ----
 
-sa_vars <- c(
-  "U_UNROT", "U_SIGMA", "V_UNROT", "V_SIGMA", "W_UNROT", "W_SIGMA", 
-  "T_SONIC", "T_SONIC_SIGMA", "ROT_PITCH"
+sa_vars <- cfg$qc_auto$sa_vars
+# Flag if NA introduced during dependency cleaning
+sa_dep <- apply(is.na(cleaned[sa_vars]) & !is.na(data[sa_vars]), 1, any)
+# Restore original NAs
+sa_dep[apply(is.na(data[sa_vars]), 1, any)] <- NA
+
+li7500_vars <- cfg$qc_auto$li7500_vars
+# Flag if NA introduced during dependency cleaning
+li7500_dep <- apply(
+  is.na(cleaned[li7500_vars]) & !is.na(data[li7500_vars]), 1, any
 )
-sa_dep <- sa_vars |>
-  map(\(x) is.na(cleaned[[x]]) & !is.na(data[[x]])) |>
-  reduce(`|`)
+# Restore original NAs
+li7500_dep[apply(is.na(data[li7500_vars]), 1, any)] <- NA
 
-li7500_vars <- c("H2O", "H2O_SIGMA", "CO2", "CO2_SIGMA")
-li7500_dep <- li7500_vars |>
-  map(\(x) is.na(cleaned[[x]]) & !is.na(data[[x]])) |>
-  reduce(`|`)
-
-li7700_vars <- c("CH4", "CH4_SIGMA")
-li7700_dep <- li7700_vars |>
-  map(\(x) is.na(cleaned[[x]]) & !is.na(data[[x]])) |>
-  reduce(`|`)
+li7700_vars <- cfg$qc_auto$li7700_vars
+# Flag if NA introduced during dependency cleaning
+li7700_dep <- apply(
+  is.na(cleaned[li7700_vars]) & !is.na(data[li7700_vars]), 1, any
+)
+# Restore original NAs
+li7700_dep[apply(is.na(data[li7700_vars]), 1, any)] <- NA
 
 ## Perform QC checks on biomet data --------------------------------------------
-
-# Met vars: TA, PA, RH, VPD, WS, WD, USTAR 
-# Biomet vars: PPFD_IN, SW_IN, SW_OUT, LW_IN, LW_OUT, NETRAD, P_RAIN, G, TS, SWC
 
 met_qc <- data[, 0]
 
@@ -114,117 +124,104 @@ met_qc$QC_WS_DEP <- if_else(sa_dep | wind_dep, 2, 0)
 met_qc$QC_WD_DEP <- met_qc$QC_WS_DEP
 met_qc$QC_USTAR_DEP <- met_qc$QC_WS_DEP
 
-### Plausible limits ----
+### Physical limits ----
 
-# vars |> map("phys_lims") |> compact()
+# Get vars with defined plausible limits (excluding dependencies)
+met_lims <- vars |> 
+  keep(\(x) str_starts(x$type, "met")) |> 
+  map("phys_lims") |> 
+  compact()
 
-met_qc <- mutate(
-  met_qc,
-  QC_TA_LIM = if_else(!between(data$TA, -20, 50), 2, 0),
-  QC_PA_LIM = if_else(!between(data$PA, 95, 105), 2, 0),
-  QC_RH_LIM = if_else(!between(data$RH, 0, 100), 2, 0),
-  QC_VPD_LIM = if_else(!between(data$VPD, 0, 45), 2, 0),
-  QC_WS_LIM = if_else(!between(data$WS, 0, 40), 2, 0),
-  QC_WD_LIM = if_else(!between(data$WD, 0, 360), 2, 0),
-  QC_USTAR_LIM = if_else(!between(data$USTAR, 0, 3), 2, 0),
-  QC_PPFD_IN_LIM = if_else(!between(data$PPFD_IN, 0, 2200), 2, 0),
-  QC_SW_IN_LIM = if_else(!between(data$SW_IN, 0, 1200), 2, 0),
-  QC_SW_OUT_LIM = if_else(!between(data$SW_OUT, -10, 500), 2, 0),
-  QC_LW_IN_LIM = if_else(!between(data$LW_IN, 100, 600), 2, 0),
-  QC_LW_OUT_LIM = if_else(!between(data$LW_OUT, 100, 750), 2, 0),
-  QC_NETRAD_LIM = if_else(!between(data$NETRAD, -200, 900), 2, 0),
-  QC_G_LIM = if_else(!between(data$G, -100, 250), 2, 0),
-  QC_TS_LIM = if_else(!between(data$TS, -5, 35), 2, 0),
-  QC_SWC_LIM = if_else(!between(data$SWC, 0, 100), 2, 0),
-  QC_P_RAIN_LIM = if_else(!between(data$P_RAIN, 0, 50), 2, 0)
-)
+# Flag values outside limits
+for (var in names(met_lims)) {
+  lims <- met_lims[[var]]
+  flag <- apply_thr(as.numeric(data[[var]]), lims, flag = "outside")
+  met_qc[[glue("QC_{var}_LIM")]] <- flag
+}
 
 ### Spikes ----
 
-met_qc <- mutate(
-  met_qc,
-  QC_TA_SPIKE = flag_spikes(data$TA, lim_flag = QC_TA_LIM),
-  QC_PA_SPIKE = flag_spikes(data$PA, lim_flag = QC_PA_LIM),
-  QC_RH_SPIKE = flag_spikes(data$RH, lim_flag = QC_RH_LIM),
-  QC_VPD_SPIKE = flag_spikes(data$VPD, lim_flag = QC_VPD_LIM),
-  QC_LW_IN_SPIKE = flag_spikes(data$LW_IN, lim_flag = QC_LW_IN_LIM),
-  QC_LW_OUT_SPIKE = flag_spikes(data$LW_OUT, lim_flag = QC_LW_OUT_LIM),
-  QC_G_SPIKE = flag_spikes(data$G, lim_flag = QC_G_LIM),
-  # Not checking TS spikes - too sensitive
-  # QC_TS_SPIKE = flag_spikes(data$TS, lim_flag = QC_TS_LIM),
-  QC_SWC_SPIKE = flag_spikes(data$SWC, lim_flag = QC_SWC_LIM)
-)
+spike_vars <- cfg$qc_auto$spike_vars
+
+for (var in spike_vars) {
+  flag <- flag_spikes(data[[var]], lim_flag = met_qc[[glue("QC_{var}_LIM")]])
+  met_qc[[glue("QC_{var}_SPIKE")]] <- flag
+}
 
 ### Multivariate comparison ----
 
-odr_coef <- function(x, y) {
-  
-  # Orthogonal distance regression
-  df <- data.frame(x = x, y = y)
-  r <- prcomp(~ x + y, data = df, na.action = na.exclude)
-  slope <- r$rotation[2, 1] / r$rotation[1, 1]
-  int <- r$center[2] - slope * r$center[1]
-  
-  c(slope, int)
-}
-
-flag_mvc <- function(x, y, dist_thr, abs_dist_thr = 0) {
-  odr <- odr_coef(x, y)
-  resid <- y - (x * odr[1] + odr[2])
-  dist <- abs(resid/sqrt(1 + odr[1]^2))
-  rse <- sqrt(mean(dist^2, na.rm = TRUE))
-  dplyr::if_else(dist > dist_thr * rse & dist > abs_dist_thr, 2, 0)
-}
+# TODO: save plots to a file
+mvc_plots <- list()
 
 # SW_IN vs PPFD_IN
-rad_odr <- odr_coef(data$PPFD_IN, data$SW_IN)
-rad_resid <- data$SW_IN - (data$PPFD_IN * rad_odr[1] + rad_odr[2])
-rad_dist <- abs(rad_resid/sqrt(1 + rad_odr[1]^2))
-rad_rse <- sqrt(mean(rad_dist^2, na.rm = TRUE))
-met_qc$QC_SW_IN_MVC <- if_else(
-  rad_dist > mvc_dist_thr * rad_rse & rad_dist > rad_dist_thr, 2, 0
-)
+if (any(complete.cases(data$PPFD_IN, data$SW_IN))) {
+  rad_odr <- odr_coef(data$PPFD_IN, data$SW_IN)
+  rad_resid <- data$SW_IN - (data$PPFD_IN * rad_odr[1] + rad_odr[2])
+  rad_dist <- abs(rad_resid/sqrt(1 + rad_odr[1]^2))
+  rad_rse <- sqrt(mean(rad_dist^2, na.rm = TRUE))
+  met_qc$QC_SW_IN_MVC <- if_else(
+    rad_dist > mvc_dist_thr * rad_rse & rad_dist > rad_dist_thr, 2, 0
+  )
+} else {
+  met_qc$QC_SW_IN_MVC <- rep(NA, nrow(data))
+}
 met_qc$QC_PPFD_IN_MVC <- met_qc$QC_SW_IN_MVC
 
-# data |> 
-#   mutate(flag = factor(met_qc$QC_SW_IN_MVC)) |> 
-#   ggplot(aes(PPFD_IN, SW_IN, color = flag)) + 
-#   geom_point()
+# Save MVC plot
+mvc_plots$rad <- data |>
+  mutate(flag = factor(met_qc$QC_SW_IN_MVC)) |>
+  ggplot(aes(PPFD_IN, SW_IN)) +
+  geom_point(aes(color = flag), na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", na.rm = TRUE)
 
 # WS vs USTAR
 temp_ws <- if_else(met_qc$QC_WS_DEP == 2, NA_real_, data$WS)
 temp_ustar <- if_else(met_qc$QC_USTAR_DEP == 2, NA_real_, data$USTAR)
-wind_odr <- odr_coef(temp_ustar, temp_ws)
-wind_resid <- temp_ws - (temp_ustar * wind_odr[1] + wind_odr[2])
-wind_dist <- abs(wind_resid/sqrt(1 + wind_odr[1]^2))
-wind_rse <- sqrt(mean(wind_dist^2, na.rm = TRUE))
-met_qc$QC_WS_MVC <- if_else(wind_dist > mvc_dist_thr * wind_rse, 2, 0)
+if (any(complete.cases(temp_ustar, temp_ws))) {
+  wind_odr <- odr_coef(temp_ustar, temp_ws)
+  wind_resid <- temp_ws - (temp_ustar * wind_odr[1] + wind_odr[2])
+  wind_dist <- abs(wind_resid/sqrt(1 + wind_odr[1]^2))
+  wind_rse <- sqrt(mean(wind_dist^2, na.rm = TRUE))
+  met_qc$QC_WS_MVC <- if_else(wind_dist > mvc_dist_thr * wind_rse, 2, 0)
+} else {
+  met_qc$QC_WS_MVC <- rep(NA, nrow(data))
+}
 # NA flags are 0 since used cleaned vars for test
-met_qc$QC_WS_MVC <- replace_na(met_qc$QC_WS_MVC, 0)
+# met_qc$QC_WS_MVC <- replace_na(met_qc$QC_WS_MVC, 0)
 met_qc$QC_USTAR_MVC <- met_qc$QC_WS_MVC
 
-# cleaned |> 
-#   mutate(flag = factor(met_qc$QC_WS_MVC)) |> 
-#   ggplot(aes(USTAR, WS, color = flag)) + 
-#   geom_point()
+# Save MVC plot
+mvc_plots$wind <- cleaned |>
+  mutate(
+    flag = factor(met_qc$QC_WS_MVC),
+    WS = temp_ws,
+    USTAR = temp_ustar
+  ) |>
+  ggplot(aes(USTAR, WS)) +
+  geom_point(aes(color = flag), na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", na.rm = TRUE)
 
 # TA vs T_SONIC
-temp_odr <- odr_coef(data$T_SONIC, data$TA)
-temp_resid <- data$TA - (data$T_SONIC * temp_odr[1] + temp_odr[2])
-temp_dist <- abs(temp_resid/sqrt(1 + temp_odr[1]^2))
-# temp_rse <- sqrt(mean(temp_resid^2, na.rm = TRUE))
-temp_rse <- sqrt(mean(temp_dist^2, na.rm = TRUE))
-met_qc$QC_TA_MVC <- if_else(temp_dist > mvc_dist_thr * temp_rse, 2, 0)
-# met_qc$QC_T_SONIC_MVC <- met_qc$QC_TA_MVC
+if (any(complete.cases(cleaned$T_SONIC, data$TA))) {
+  temp_odr <- odr_coef(cleaned$T_SONIC, data$TA)
+  temp_resid <- data$TA - (cleaned$T_SONIC * temp_odr[1] + temp_odr[2])
+  temp_dist <- abs(temp_resid/sqrt(1 + temp_odr[1]^2))
+  temp_rse <- sqrt(mean(temp_dist^2, na.rm = TRUE))
+  met_qc$QC_TA_MVC <- if_else(temp_dist > mvc_dist_thr * temp_rse, 2, 0)
+  # met_qc$QC_T_SONIC_MVC <- met_qc$QC_TA_MVC
+} else {
+  met_qc$QC_TA_MVC <- rep(NA, nrow(data))
+}
+# NA flags are 0 since used cleaned vars for test
+# met_qc$QC_TA_MVC <- replace_na(met_qc$QC_TA_MVC, 0)
 
-# cleaned |> 
-#   mutate(flag = factor(met_qc$QC_TA_MVC)) |> 
-#   ggplot(aes(T_SONIC, TA, color = flag)) + 
-#   geom_point()
+# Save MVC plot
+mvc_plots$temp <- cleaned |>
+  mutate(flag = factor(met_qc$QC_TA_MVC)) |>
+  ggplot(aes(T_SONIC, TA)) +
+  geom_point(aes(color = flag), na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, color = "black", na.rm = TRUE)
 
-### Summary plots ----
-
-# [summary plots go here]
 
 ## Perform QC checks on flux data ----------------------------------------------
 
@@ -232,111 +229,115 @@ flux_qc <- data[, 0]
 
 ### Dependencies ----
 
-flux_qc <- mutate(
-  flux_qc,
-  QC_H_DEP = if_else(sa_dep, 2, 0),
-  QC_LE_DEP = if_else(sa_dep | li7500_dep, 2, 0),
-  QC_FC_DEP = if_else(sa_dep | li7500_dep, 2, 0),
-  QC_FCH4_DEP = if_else(sa_dep | li7700_dep, 2, 0)
-)
+flux_qc$QC_H_DEP <- if_else(sa_dep, 2, 0)
+flux_qc$QC_LE_DEP <- if_else(sa_dep | li7500_dep, 2, 0)
+flux_qc$QC_FC_DEP <- if_else(sa_dep | li7500_dep, 2, 0)
+flux_qc$QC_FCH4_DEP <- if_else(sa_dep | li7700_dep, 2, 0)
 
 ### SSITC flags ----
 
-flux_qc <- mutate(
-  flux_qc,
-  QC_H_SSITC = data$H_SSITC_TEST,
-  QC_LE_SSITC = data$LE_SSITC_TEST,
-  QC_FC_SSITC = data$FC_SSITC_TEST,
-  QC_FCH4_SSITC = data$FCH4_SSITC_TEST
+flux_qc$QC_H_SSITC <- data$H_SSITC_TEST
+flux_qc$QC_LE_SSITC <- data$LE_SSITC_TEST
+flux_qc$QC_FC_SSITC <- data$FC_SSITC_TEST
+flux_qc$QC_FCH4_SSITC <- data$FCH4_SSITC_TEST
+
+### Plausible time lag ----
+
+flux_qc$QC_LE_TLAG <- if_else(data$H2O_TLAG_ACTUAL != data$H2O_TLAG_USED, 2, 0)
+flux_qc$QC_FC_TLAG <- if_else(data$CO2_TLAG_ACTUAL != data$CO2_TLAG_USED, 2, 0)
+flux_qc$QC_FCH4_TLAG <- if_else(data$CH4_TLAG_ACTUAL != data$CH4_TLAG_USED, 2, 0)
+
+### Spectral correction factor ----
+
+scf_thr <- rep(scf_max, 2)
+flux_qc$QC_H_SCF <- apply_thr(data$H_SCF, scf_thr, flag = "higher")
+flux_qc$QC_LE_SCF <- apply_thr(data$LE_SCF, scf_thr, flag = "higher")
+flux_qc$QC_FC_SCF <- apply_thr(data$FC_SCF, scf_thr, flag = "higher")
+flux_qc$QC_FCH4_SCF <- apply_thr(data$FCH4_SCF, scf_thr, flag = "higher")
+
+### Sensor signal strength ----
+
+# LI-7500: LE, FC
+agc_flag <- apply_thr(
+  data$INST_LI7500_AGC_OR_RSSI, rep(agc_min, 2), flag = "lower"
+)
+flux_qc$QC_LE_AGC <- agc_flag
+flux_qc$QC_FC_AGC <- agc_flag
+
+# LI-7700: FCH4
+flux_qc$QC_FCH4_RSSI <- apply_thr(
+  data$CUSTOM_RSSI_77_MEAN, rep(rssi_min, 2), flag = "lower"
 )
 
-### Other ----
+### Precipitation ----
 
-# Plausible time lag
-
-flux_qc <- mutate(
-  flux_qc,
-  QC_LE_TLAG = if_else(data$H2O_TLAG_ACTUAL != data$H2O_TLAG_USED, 2, 0),
-  QC_FC_TLAG = if_else(data$CO2_TLAG_ACTUAL != data$CO2_TLAG_USED, 2, 0),
-  QC_FCH4_TLAG = if_else(data$CH4_TLAG_ACTUAL != data$CH4_TLAG_USED, 2, 0)
+precip_flag <- apply_thr(
+  as.numeric(data$P_RAIN), rep(rain_thr, 2), flag = "higher"
 )
-
-# Spectral correction factor
-
-flux_qc <- mutate(
-  flux_qc,
-  QC_H_SCF = if_else(data$H_SCF > scf_max, 2, 0),
-  QC_LE_SCF = if_else(data$LE_SCF > scf_max, 2, 0),
-  QC_FC_SCF = if_else(data$FC_SCF > scf_max, 2, 0),
-  QC_FCH4_SCF = if_else(data$FCH4_SCF > scf_max, 2, 0)
-)
-
-# Sensor signal strength
-
-flux_qc <- mutate(
-  flux_qc,
-  QC_LE_AGC = if_else(data$INST_LI7500_AGC_OR_RSSI < agc_min, 2, 0),
-  QC_FC_AGC = if_else(data$INST_LI7500_AGC_OR_RSSI < agc_min, 2, 0),
-  QC_FCH4_RSSI = if_else(data$CUSTOM_RSSI_77_MEAN < rssi_min, 2, 0)
-)
-
-# Precipitation
-# TODO: check if anything is affected by gaps in precip
-flux_qc <- mutate(
-  flux_qc,
-  QC_LE_PRECIP = if_else(data$P_RAIN > rain_thr, 2, 0),
-  QC_FC_PRECIP = if_else(data$P_RAIN > rain_thr, 2, 0)
-)
+flux_qc$QC_LE_PRECIP <- precip_flag
+flux_qc$QC_FC_PRECIP <- precip_flag
 
 ### Low frequency spikes ----
 
+# Make preliminary flags to apply before despiking
 flux_qc$QC_H_PRELIM <- combn_QC(
-  as.data.frame(flux_qc), str_subset(names(flux_qc), "_H_"), no_messages = TRUE
+  as.data.frame(flux_qc), 
+  qc_names = str_subset(names(flux_qc), "_H_"), 
+  no_messages = TRUE
 )
 flux_qc$QC_LE_PRELIM <- combn_QC(
-  as.data.frame(flux_qc), str_subset(names(flux_qc), "_LE_"),
-  na.as_0_pattern = "PRECIP$", no_messages = TRUE
+  as.data.frame(flux_qc), 
+  qc_names = str_subset(names(flux_qc), "_LE_"),
+  na.as_0_pattern = "PRECIP$", 
+  no_messages = TRUE
 )
 flux_qc$QC_FC_PRELIM <- combn_QC(
-  as.data.frame(flux_qc), str_subset(names(flux_qc), "_FC_"),
-  na.as_0_pattern = "PRECIP$", no_messages = TRUE
+  as.data.frame(flux_qc), 
+  qc_names = str_subset(names(flux_qc), "_FC_"),
+  na.as_0_pattern = "PRECIP$", 
+  no_messages = TRUE
 )
 
+# 'despikeLF' expects specific naming
 flux_qc$timestamp <- data$TIMESTAMP
 flux_qc$GR <- data$SW_IN_POT
 
 flux_qc$QC_H_SPIKESLF <- despikeLF(
   as.data.frame(bind_cols(data, flux_qc)), 
-  var = "H", qc_flag = "QC_H_PRELIM", 
-  var_thr = c(-200, 600), light = "GR", night_thr = night_thr
+  var = "H", 
+  qc_flag = "QC_H_PRELIM", 
+  var_thr = vars$H$phys_lims, 
+  light = "GR", 
+  night_thr = night_thr
 )
 
 flux_qc$QC_LE_SPIKESLF <- despikeLF(
   as.data.frame(bind_cols(data, flux_qc)), 
-  var = "LE", qc_flag = "QC_LE_PRELIM", 
-  var_thr = c(-200, 800), light = "GR", night_thr = night_thr
+  var = "LE", 
+  qc_flag = "QC_LE_PRELIM", 
+  var_thr = vars$LE$phys_lims, 
+  light = "GR", 
+  night_thr = night_thr
 )
 
 flux_qc$QC_FC_SPIKESLF <- despikeLF(
   as.data.frame(bind_cols(data, flux_qc)), 
-  var = "FC", qc_flag = "QC_FC_PRELIM", 
-  var_thr = c(-50, 50), light = "GR", night_thr = night_thr
+  var = "FC", 
+  qc_flag = "QC_FC_PRELIM", 
+  var_thr = vars$FC$phys_lims, 
+  light = "GR", 
+  night_thr = night_thr
 )
 
 # FCH4 is checked for range but not spikes
-if (site %in% c("JLN", "JLR")) {
-  # flux_qc$QC_FCH4_LIM <- if_else(!between(data$FCH4, -0.2, 1.0), 2, 0)
-  flux_qc$QC_FCH4_LIM <- if_else(!between(data$FCH4, -0.15, 0.85), 2, 0)
-} else if (site == "JLA") {
-  # flux_qc$QC_FCH4_LIM <- if_else(!between(data$FCH4, -0.2, 0.5), 2, 0)
-  flux_qc$QC_FCH4_LIM <- if_else(!between(data$FCH4, -0.15, 0.3), 2, 0)
-}
+fch4_lims <- cfg$qc_auto$fch4_lims[[site]]
+flux_qc$QC_FCH4_LIM <- apply_thr(data$FCH4, fch4_lims, flag = "outside")
 
 flux_qc <- select(flux_qc, -timestamp, -GR, -ends_with("_PRELIM"))
 
-### Footprint ----
+### Footprint (WIP) ----
 
-# source("source/footprint-model.R")
+# source("R/footprint-model.R")
 # 
 # # Subset variables for fetch calculations
 # data_fetch <- cleaned |>
@@ -357,13 +358,22 @@ flux_qc <- select(flux_qc, -timestamp, -GR, -ends_with("_PRELIM"))
 
 # [summary plots go here]
 
-## Combine flags and add to dataset --------------------------------------------
+## Combine flags ---------------------------------------------------------------
 
 met_vars <- unique(str_match(names(met_qc), "QC_(.*)_[^_]*$")[, 2])
 met_flags <- met_vars |> 
   set_names(glue("QC_{met_vars}")) |> 
   map(\(x) str_subset(names(met_qc), glue("_{x}_"))) |> 
-  map(\(x) combn_QC(as.data.frame(met_qc), x, additive = FALSE, na.as = NA)) |> 
+  map(
+    \(nm) combn_QC(
+      x = as.data.frame(met_qc), 
+      qc_names = nm, 
+      additive = FALSE, 
+      # na.as = NA, 
+      # For MVC flags NA = 0 since used cleaned vars for test
+      na.as_0_pattern = "MVC$"
+    )
+  ) |> 
   bind_cols()
 
 flux_vars <- c("H", "LE", "FC", "FCH4")
@@ -395,7 +405,100 @@ flux_qc_summary <- flux_qc |>
   ) |>
   pivot_wider(names_from = test, values_from = value)
 
-# TODO: save these summaries?
+# summary_QC(
+#   as.data.frame(flux_qc),
+#   c("QC_FC_DEP", "QC_FC_SSITC", "QC_FC_TLAG", "QC_FC_SCF", "QC_FC_AGC", "QC_FC_PRECIP", "QC_FC_SPIKESLF"),
+#   na.as_0_pattern = "SPIKESLF$|PRECIP$",
+#   cumul = TRUE, plot = TRUE
+# )
+
+# TODO: save these summaries
+
+
+## Summary plots ---------------------------------------------------------------
+
+### Biomet variables ----
+
+biomet_report_file <- glue("qc_biomet_{site}-{year}.pdf")
+pdf(file.path(report_dir, biomet_report_file), width = 11, height = 8.5)
+
+for (var in met_vars) {
+  # Workaround for plot_eddy error when no valid data
+  if (all(is.na(cleaned[[var]]))) next
+  
+  cleaned |> 
+    rename(timestamp = TIMESTAMP) |> 
+    mutate("{var}" := structure(.data[[var]], units = vars[[var]]$units)) |> 
+    as.data.frame() |> 
+    plot_eddy(
+      var, 
+      qc_flag = glue("QC_{var}"),
+      test = glue("QC_{var}"),
+      skip = "weekly",
+      ylim = vars[[var]]$phys_lims,
+      document = TRUE
+    )
+}
+
+dev.off()
+
+### Fluxes ----
+
+flux_flag_vars <- flux_vars |> 
+  map(\(x) str_subset(names(flux_qc), glue("_{x}_"))) |> 
+  set_names(flux_vars)
+
+flux_report_file <- glue("qc_fluxes_{site}-{year}.pdf")
+pdf(file.path(report_dir, flux_report_file), width = 11, height = 8.5)
+
+# QC flag summaries
+for (var in flux_vars) {
+  gridExtra::grid.arrange(
+    grobs = list(
+      summary_QC(
+        as.data.frame(flux_qc),
+        flux_flag_vars[[var]],
+        na.as_0_pattern = "SPIKESLF$|PRECIP$",
+        cumul = FALSE, plot = TRUE
+      ),
+      summary_QC(
+        as.data.frame(flux_qc),
+        flux_flag_vars[[var]],
+        na.as_0_pattern = "SPIKESLF$|PRECIP$",
+        cumul = TRUE, plot = TRUE
+      )
+    ),
+    nrow = 1
+  )
+}
+
+# Diagnostic time series plots
+for (var in flux_vars) {
+  data |> 
+    rename(
+      timestamp = TIMESTAMP, PAR = PPFD_IN, GR = SW_IN, Rn = NETRAD,
+      Tair = TA, Tsoil = TS
+    ) |> 
+    mutate(
+      PAR = structure(PAR, units = vars[["PPFD_IN"]]$units),
+      GR = structure(GR, units = vars[["SW_IN"]]$units),
+      VPD = structure(VPD, units = vars[["VPD"]]$units),
+      Rn = structure(Rn, units = vars[["NETRAD"]]$units),
+      Tair = structure(Tair, units = vars[["TA"]]$units),
+      Tsoil = structure(Tsoil, units = vars[["TS"]]$units),
+      "{var}" := structure(.data[[var]], units = vars[[var]]$units)
+    ) |>
+    as.data.frame() |> 
+    plot_eddy(
+      var, 
+      qc_flag = glue("{var}_SSITC_TEST"), 
+      test = glue("{var}_SSITC_TEST"),
+      ylim = vars[[var]]$phys_lims,
+      document = TRUE
+    )
+}
+
+dev.off()
 
 ## Write quality-flagged dataset with documentation ----------------------------
 
