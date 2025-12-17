@@ -1,4 +1,4 @@
-# Prepare for post-processing --------------------------------------------------
+# Correct EddyPro output -------------------------------------------------------
 
 # Purpose: 
 # Convert units, adjust for instrument offsets, fix known issues
@@ -12,14 +12,11 @@ library("tidyverse")
 
 ## Initialize script settings & documentation ----------------------------------
 
-site <- "JLR" # three-letter site code
-year <- 2023 # a single year to process
 data_dir <- file.path("data", site) # path to directory containing all data
 output_dir <- file.path("output", site, year) # where to write output
 
 # Load site configuration
-# TODO: implement this
-# config <- config::get(config = site)
+site_cfg <- read_yaml("config/site-config.yml")[[site]]
 
 # Load metadata file
 md <- read_yaml(file.path(data_dir, "metadata.yml"))
@@ -52,6 +49,12 @@ corr <- corr |>
   # Remove "HF" suffix from random uncertainties
   rename_with(\(x) str_remove(x, "_HF"))
 
+# Specify biomet versions of vars
+corr <- rename(corr, TA_MET = TA, RH_MET = RH)
+
+# Calculate version of VPD from biomet vars
+corr$VPD_MET <- bigleaf::rH.to.VPD(corr$RH_MET/100, corr$TA_MET) * 10
+
 # Change CH4 units from nmol to umol
 ch4_vars <- c(
   "FCH4", "FCH4_RANDUNC", "SCH4", "FCH4_VADV", "CH4_MIXING_RATIO", 
@@ -60,10 +63,10 @@ ch4_vars <- c(
 corr <- mutate(corr, across(all_of(ch4_vars), \(x) x/1000))
 
 # Air pressure from Pa to kPa
-corr <- mutate(corr, CUSTOM_AIR_P_MEAN = CUSTOM_AIR_P_MEAN/1000)
+corr$CUSTOM_AIR_P_MEAN <- corr$CUSTOM_AIR_P_MEAN/1000
 
 # Air temperature from K to C
-corr <- mutate(corr, CUSTOM_AIR_T_MEAN = CUSTOM_AIR_T_MEAN - 273.15)
+corr$CUSTOM_AIR_T_MEAN <- corr$CUSTOM_AIR_T_MEAN - 273.15
 
 ## Correct fluxes for storage --------------------------------------------------
 
@@ -147,17 +150,55 @@ corr <- corr |>
 # Get excluded periods from file
 # Note: DO NOT edit these files in Excel - it messes with date formatting
 # TODO: make code flexible enough to allow date format to change
-exclude <- as.list(read_csv(file.path(data_dir, "flagged_periods.csv")))
+# exclude <- as.list(read_csv(file.path(data_dir, "flagged_periods.csv")))
+exclude <- site_cfg$flagged_periods
+exclude_log <- c()
 
 # Loop through vars and remove data within specified time ranges
-for (i in 1:length(exclude$var)) {
-  corr <- mutate(
-    corr, 
-    "{exclude$var[i]}" := if_else(
-      between(TIMESTAMP, exclude$from[i], exclude$to[i]), 
-      NA_real_, .data[[exclude$var[i]]]
+# for (i in 1:length(exclude$var)) {
+#   corr <- mutate(
+#     corr, 
+#     "{exclude$var[i]}" := if_else(
+#       between(TIMESTAMP, exclude$from[i], exclude$to[i]), 
+#       NA_real_, .data[[exclude$var[i]]]
+#     )
+#   )
+# }
+for (var in names(exclude)) {
+  for (i in 1:length(exclude[[var]])) {
+    period <- exclude[[var]][[i]]
+    
+    # Get flagged bounds within processing year
+    from <- max(ymd_hm(period$from), first(corr$TIMESTAMP))
+    to <- min(ymd_hm(period$to), last(corr$TIMESTAMP))
+    
+    # Skip if nothing flagged within processing year
+    if (from > to) next
+    
+    # Remove data between flagged bounds (inclusive)
+    if (!is.null(period$remove)) {
+      # Remove selected data
+      var_expr <- paste(var, period$remove)
+      var_flag <- eval(parse(text = var_expr), envir = corr)
+      corr[[var]] <- if_else(
+        between(corr$TIMESTAMP, from, to) & var_flag,
+        NA_real_, corr[[var]]
+      )
+    } else {
+      # Remove all data
+      var_expr <- var
+      corr[[var]] <- if_else(
+        between(corr$TIMESTAMP, from, to),
+        NA_real_, corr[[var]]
+      )
+    }
+    
+    # Write to log for documentation
+    exclude_log <- c(
+      exclude_log,
+      glue("  - {var_expr} from {from} to {to}; reason: {period$reason}")
     )
-  )
+  }
 }
 
 # Propagate missing data in biomet logger power
@@ -168,12 +209,9 @@ corr <- mutate(
 
 ## Set primary versions of replicate measurements ------------------------------
 
-corr <- mutate(
-  corr,
-  # Set PA_EP to NA when missing CH4 data (PA_EP is from LI-7700)
-  PA_EP = if_else(is.na(CH4) & !is.na(data$CUSTOM_AIR_P_MEAN), NA, PA_EP),
-  # Calculate VPD from biomet vars
-  VPD = bigleaf::rH.to.VPD(RH/100, TA) * 10
+# Set PA_EP to NA when missing CH4 data (PA_EP is from LI-7700)
+corr$PA_EP <- if_else(
+  is.na(corr$CH4) & !is.na(data$CUSTOM_AIR_P_MEAN), NA, corr$PA_EP
 )
 
 # Since LI-7700 TA & PA are flaky, is a better solution to run EddyPro with 
@@ -197,20 +235,17 @@ corr <- mutate(
 
 if (site == "JLA") {
   
-  corr$TA <- coalesce(corr$CUSTOM_AIR_T_MEAN, corr$TA_EP, corr$TA)
+  corr$TA <- coalesce(corr$CUSTOM_AIR_T_MEAN, corr$TA_EP, corr$TA_MET)
   corr$PA <- coalesce(corr$CUSTOM_AIR_P_MEAN, corr$PA_EP)
-  corr$VPD <- coalesce(corr$VPD_EP, corr$VPD)
+  corr$VPD <- coalesce(corr$VPD_EP, corr$VPD_MET)
+  corr$RH <- coalesce(corr$RH_EP, corr$RH_MET)
+  
+  # Average reps
   corr$G <- rowMeans(cbind(corr$G_1, corr$G_2, corr$G_3))
-  
-  # Something off with SWC in 2023 (or I forgot what it's supposed to look like)
-  # corr$SWC <- (corr$SWC_1 + corr$SWC_3)/2
-  # corr$SWC <- rowMeans(cbind(corr$SWC_1, corr$SWC_2, corr$SWC_3), na.rm = TRUE)
-  # corr$TS <- (corr$TS_1 + corr$TS_3)/2
-  # corr$TS <- rowMeans(cbind(corr$TS_1, corr$TS_2, corr$TS_3), na.rm = TRUE)
-  
-  # Remove bias due to varying rep availability
   corr$TS <- rowMeans(cbind(corr$TS_1, corr$TS_2, corr$TS_3))
   corr$SWC <- rowMeans(cbind(corr$SWC_1, corr$SWC_2, corr$SWC_3))
+  
+  # Remove bias due to varying rep availability
   # Approximation of all reps from just reps 1 & 3
   corr$TS <- coalesce(
     corr$TS, rowMeans(cbind(corr$TS_1, corr$TS_3)) * 0.9973 + 0.0716
@@ -221,21 +256,21 @@ if (site == "JLA") {
   
 } else if (site == "JLN") {
   
-  corr$TA <- coalesce(corr$CUSTOM_AIR_T_MEAN, corr$TA_EP, corr$TA)
+  corr$TA <- coalesce(corr$CUSTOM_AIR_T_MEAN, corr$TA_EP, corr$TA_MET)
   corr$PA <- coalesce(corr$CUSTOM_AIR_P_MEAN, corr$PA_EP)
-  corr$VPD <- coalesce(corr$VPD_EP, corr$VPD)
+  corr$VPD <- coalesce(corr$VPD_EP, corr$VPD_MET)
+  corr$RH <- coalesce(corr$RH_EP, corr$RH_MET)
+  
+  # Average reps
   # G_2 inverted beginning in Jun 2019
   corr$G_2 <- if_else(
     corr$TIMESTAMP >= ymd_hm("2019-06-07 11:45"), -corr$G_2, corr$G_2
   )
   corr$G <- rowMeans(cbind(corr$G_1, corr$G_2, corr$G_3))
-  
-  # corr$SWC <- corr$SWC_3
-  # corr$TS <- rowMeans(cbind(corr$TS_1, corr$TS_2, corr$TS_3), na.rm = TRUE)
-  
-  # Remove bias due to varying rep availability
   corr$TS <- rowMeans(cbind(corr$TS_1, corr$TS_2, corr$TS_3))
   corr$SWC <- rowMeans(cbind(corr$SWC_1, corr$SWC_2, corr$SWC_3))
+  
+  # Remove bias due to varying rep availability
   # Approximation of all reps from just reps 1 & 3
   corr$TS <- coalesce(
     corr$TS, rowMeans(cbind(corr$TS_1, corr$TS_3)) * 1.0111 + -0.1904
@@ -243,27 +278,29 @@ if (site == "JLA") {
   corr$SWC <- coalesce(
     corr$SWC, rowMeans(cbind(corr$SWC_1, corr$SWC_3)) * 0.8061 + 12.5992
   )
+  corr$G <- coalesce(
+    corr$G, rowMeans(cbind(corr$G_1, corr$G_3)) * 0.43043 + -0.03457
+  )
   # Approximation of all reps from just rep 3
   corr$TS <- coalesce(corr$TS, corr$TS_3 * 1.0189 + -0.2274)
   corr$SWC <- coalesce(corr$SWC, corr$SWC_3 * 0.8359 + 10.2531)
   
 } else if (site == "JLR") {
   
-  corr$TA <- coalesce(corr$TA, corr$CUSTOM_AIR_T_MEAN, corr$TA_EP)
+  corr$TA <- coalesce(corr$TA_MET, corr$CUSTOM_AIR_T_MEAN, corr$TA_EP)
   corr$PA <- coalesce(corr$CUSTOM_AIR_P_MEAN, corr$PA_EP)
-  corr$VPD <- coalesce(corr$VPD, corr$VPD_EP)
+  corr$VPD <- coalesce(corr$VPD_MET, corr$VPD_EP)
+  corr$RH <- coalesce(corr$RH_MET, corr$RH_EP)
   
+  # Average reps
   # G_1 inverted throughout
   corr$G_1 <- -corr$G_1
   corr$G <- rowMeans(cbind(corr$G_1, corr$G_2, corr$G_3))
-  
-  # corr$SWC <- corr$SWC_3 # consider changing to SWC_2 or average of 2 & 3
-  # corr$TS <- rowMeans(cbind(corr$TS_1, corr$TS_2, corr$TS_3), na.rm = TRUE)
-  
-  # Remove bias due to varying rep availability
   # TS_1 has WAY more variance than other reps - maybe it came loose...
   corr$TS <- rowMeans(cbind(corr$TS_1, corr$TS_2, corr$TS_3))
   corr$SWC <- rowMeans(cbind(corr$SWC_1, corr$SWC_2, corr$SWC_3))
+  
+  # Remove bias due to varying rep availability
   # Approximation of all reps from just reps 1 & 3
   corr$TS <- coalesce(
     corr$TS, rowMeans(cbind(corr$TS_1, corr$TS_3)) * 0.9882 + 0.2767
@@ -296,8 +333,9 @@ calc_tdew <- function(x) {
 corr$TDEW_EP <- corr$TDEW
 corr$VAPOR_PARTIAL_PRESSURE_SAT <- calc_esat(corr$TA)
 corr$VAPOR_PARTIAL_PRESSURE <- corr$RH/100 * corr$VAPOR_PARTIAL_PRESSURE_SAT
-# corr$TDEW <- bigleaf::dew.point(corr$TA, corr$VPD * 10) # slow
+# corr$TDEW <- bigleaf::dew.point(corr$TA, corr$VPD * 10) # too slow
 corr$TDEW <- calc_tdew(corr$VAPOR_PARTIAL_PRESSURE)
+# TODO also update VPD, RH?
 
 
 ## Write corrected dataset with documentation ----------------------------------
@@ -326,6 +364,9 @@ write_lines(
          " and 'PPFD_IN' ({offset$PPFD_IN})"
     ),
     glue("  - Set negative nighttime values of 'SW_IN' and 'PPFD_IN' to zero"),
+    "",
+    "Data removed",
+    glue_collapse(exclude_log, "\n"),
     "",
     glue("File out: {corr_file}"),
     "",
