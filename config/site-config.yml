@@ -20,57 +20,95 @@ default:
       order: [TS_1, TS_2, TS_3]
       method: average
   gapfill_merge:
+    G:
+      order: [KS, MDS, ALT1, ALT2, ERA]
+    LW_IN:
+      order: [MDS, ALT1, ALT2, ERA]
+    NETRAD:
+      order: [LI, ALT1, ALT2, ERA]
     TA:
       order: [LI, ALT1, ALT2, MDS, ERA]
     PA:
       order: [LI, ALT1, ALT2, ERA]
     RH:
       order: [LI, ALT1, ALT2, ERA]
-    VPD:
-      order: [LI, ALT1, ALT2, MDS, ERA]
-    WS:
-      order: [LI, ALT1, ALT2, ERA]
-    WD:
-      order: [ALT1, ALT2, ERA]
-    USTAR:
-      order: [LI, MDS, ALT1, ALT2, ERA]
     PPFD_IN:
       order: [ALT1, ALT2, ERA]
     SW_IN:
       order: [ALT1, ALT2, MDS, ERA]
     SW_OUT:
       order: [ALT1, ALT2, ERA]
-    LW_IN:
-      order: [MDS, ALT1, ALT2, ERA]
-    NETRAD:
-      order: [LI, ALT1, ALT2, ERA]
     P_RAIN:
       order: [ALT1, ALT2, ERA]
-    G:
-      order: [KS, MDS, ALT1, ALT2, ERA]
     TS:
       order: [KS, MDS, ALT1, ALT2, ALT3]
     SWC:
       order: [KS, MDS, ERA]
+    USTAR:
+      order: [LI, MDS, ALT1, ALT2, ERA]
+    VPD:
+      order: [LI, ALT1, ALT2, MDS, ERA]
+    WD:
+      order: [ALT1, ALT2, ERA]
+    WS:
+      order: [LI, ALT1, ALT2, ERA]
 
 JLA:
   flagged_periods:
-    LW_IN:
-      - from: 2019-06-17 15:15
-        to: 2020-07-03 06:15
-        reason: null
-    LW_OUT:
-      - from: 2019-06-17 15:15
-        to: 2020-07-03 06:15
-        reason: null
-    P_RAIN:
-      - from: 2019-12-01 03:45
-        to: 2021-02-26 13:15
-        reason: null
     CUSTOM_AIR_P_MEAN:
       - from: 2020-05-04 00:15
         to: 2023-08-04 11:15
         reason: stuck on constant
+    LW_IN:
+      - from: 2019-06-17 15:15
+        to: 2020-07-03 06:15
+        reason: null
+      - from: 2024-06-18 00:15
+        to: 2024-10-30 23:45
+        remove: < 300
+        reason: data problematic
+    LW_OUT:
+      - from: 2019-06-17 15:15
+        to: 2020-07-03 06:15
+        reason: null
+      - from: 2024-06-18 00:15
+        to: 2024-10-30 23:45
+        remove: < 250
+        reason: data problematic
+    P_RAIN:
+      - from: 2019-12-01 03:45
+        to: 2021-02-26 13:15
+        reason: null
+      - from: 2024-06-11 00:15
+        to: 2025-01-30 23:45
+        reason: tipping bucket not recording
+      - from: 2025-03-21 00:15
+        to: 2025-10-27 23:15
+        reason: tipping bucket not working
+    RH_EP:
+      - from: 2024-05-05 00:15
+        to: 2024-10-02 23:45
+        remove: < 20
+        reason: too many zeros
+      - from: 2025-05-30 00:15
+        to: 2025-11-05 23:45
+        remove: < 20
+        reason: lots of zero values
+    RH_MET:
+      - from: 2025-05-30 00:15
+        to: 2025-11-05 23:45
+        remove: < 20
+        reason: lots of zero values
+    SW_IN:
+      - from: 2024-07-20 00:15
+        to: 2024-08-13 23:45
+        reason: data problematic
+      - from: 2024-08-23 00:15
+        to: 2024-09-07 23:45
+        reason: data problematic
+      - from: 2024-10-30 00:15
+        to: 2025-12-31 23:45
+        reason: data problematic
     SWC_1:
       - from: 2022-03-12 16:15
         to: 2024-10-25 03:15
@@ -105,31 +143,75 @@ JLA:
         to: 2024-10-31 11:15
         reason: erratic behavior
   rep_merge:
-    TA:
-      order: [CUSTOM_AIR_T_MEAN, TA_EP, TA_MET]
-      method: coalesce
-    PA:
-      order: [CUSTOM_AIR_P_MEAN, PA_EP]
-      method: coalesce
-    VPD:
-      order: [VPD_EP, VPD_MET]
-      method: coalesce
     G:
       order: [G_1, G_2, G_3]
       method: average
+    PA:
+      order: [CUSTOM_AIR_P_MEAN, PA_EP]
+      method: coalesce
     SWC:
       order: [SWC_1, SWC_2, SWC_3]
       method: average
+    TA:
+      order: [CUSTOM_AIR_T_MEAN, TA_EP, TA_MET]
+      method: coalesce
     TS:
       order: [TS_1, TS_2, TS_3]
       method: average
+    VPD:
+      order: [VPD_EP, VPD_MET]
+      method: coalesce
 
 JLN:
   flagged_periods:
+    LW_IN:
+      - from: 2025-10-22 00:15
+        to: 2025-10-22 23:45
+        remove: < 250
+        reason: Sutron unit malfunction and firmware update
+    LW_OUT:
+      - from: 2025-10-22 00:15
+        to: 2025-10-22 23:45
+        remove: < 250
+        reason: Sutron unit malfunction and firmware update
     P_RAIN:
       - from: 2020-11-18 00:15
         to: 2021-05-15 15:15
         reason: stuck on zero
+    PPFD_IN:
+      - from: 2023-10-19 06:45
+        to: 2025-11-05 23:45
+        reason: stuck on zero
+    RH_EP:
+      - from: 2024-05-01 00:15
+        to: 2024-10-02 23:45
+        reason: sensor uncalibrated
+        remove: < 20
+      - from: 2024-12-10 00:15
+        to: 2024-12-11 23:45
+        remove: < 20
+        reason: sensor uncalibrated
+      - from: 2025-05-30 00:15
+        to: 2025-11-05 23:45
+        remove: < 20
+        reason: unusual data in Jun-Aug; zeros in Oct and Nov
+    RH_MET:
+      - from: 2024-05-01 00:15
+        to: 2024-10-02 23:45
+        reason: sensor uncalibrated
+        remove: < 20
+      - from: 2024-12-10 00:15
+        to: 2024-12-11 23:45
+        remove: < 20
+        reason: sensor uncalibrated
+      - from: 2025-05-30 00:15
+        to: 2025-11-05 23:45
+        remove: < 20
+        reason: unusual data in Jun-Aug; zeros in Oct and Nov
+    SW_IN:
+      - from: 2025-07-31 00:15
+        to: 2025-11-05 23:45
+        reason: data flagged and out of range in Aug; no data from 8/30 to 10/22 - Sutron unit malfunction and firmware update
     TS_1:
       - from: 2022-05-10 02:45
         to: 2022-05-20 03:15
@@ -138,32 +220,44 @@ JLN:
       - from: 2022-04-10 23:15
         to: 2022-05-20 03:15
         reason: erratic behavior
-    PPFD_IN:
-      - from: 2023-10-19 06:45
-        to: 2024-06-14 04:45
-        reason: stuck on zero
+    USTAR:
+      - from: 2024-01-13 00:15
+        to: 2024-05-13 23:45
+        reason: likely due to use of LI-COR 7550 loaner
+    WD:
+      - from: 2024-01-13 00:15
+        to: 2024-05-13 23:45
+        reason: likely due to use of LI-COR 7550 loaner
+    WS:
+      - from: 2024-01-13 00:15
+        to: 2024-05-13 23:45
+        reason: likely due to use of LI-COR 7550 loaner
   rep_merge:
-    TA:
-      order: [CUSTOM_AIR_T_MEAN, TA_EP, TA_MET]
-      method: coalesce
-    PA:
-      order: [CUSTOM_AIR_P_MEAN, PA_EP]
-      method: coalesce
-    VPD:
-      order: [VPD_EP, VPD]
-      method: coalesce
     G:
       order: [G_1, G_3]
       method: average
+    PA:
+      order: [CUSTOM_AIR_P_MEAN, PA_EP]
+      method: coalesce
     SWC:
       order: [SWC_3]
       method: average
+    TA:
+      order: [CUSTOM_AIR_T_MEAN, TA_EP, TA_MET]
+      method: coalesce
     TS:
       order: [TS_1, TS_2, TS_3]
       method: average
+    VPD:
+      order: [VPD_EP, VPD]
+      method: coalesce
 
 JLR:
   flagged_periods:
+    CUSTOM_AIR_P_MEAN:
+      - from: 2023-06-18 12:45
+        to: 2023-08-07 09:15
+        reason: null
     LOGGERPOWER:
       - from: 2019-08-21 05:45
         to: 2019-08-24 07:15
@@ -178,13 +272,9 @@ JLR:
       - from: 2020-10-11 19:45
         to: 2020-11-18 11:15
         reason: null
-    TS_2:
-      - from: 2022-10-27 09:15
-        to: 2022-11-11 18:45
-        reason: stuck on constant
-      - from: 2023-07-27 23:15
-        to: 2023-09-06 17:15
-        reason: stuck on constant
+      - from: 2024-10-01 00:15
+        to: 2025-01-30 23:45
+        reason: tipping bucket malfunction
     SWC_2:
       - from: 2022-10-27 09:15
         to: 2022-11-11 18:45
@@ -192,26 +282,45 @@ JLR:
       - from: 2023-07-27 23:15
         to: 2023-09-06 17:15
         reason: stuck on constant
-    CUSTOM_AIR_P_MEAN:
-      - from: 2023-06-18 12:45
-        to: 2023-08-07 09:15
+    SWC_3:
+      - from: 2024-09-26 00:15
+        to: 2024-10-31 23:45
+        remove: < 38
         reason: null
+      - from: 2024-09-26 00:15
+        to: 2024-10-31 23:45
+        remove: "> 39"
+        reason: null
+    TS_1:
+      - from: 2024-08-04 00:15
+        to: 2024-08-12 23:45
+        reason: null
+      - from: 2024-10-31 00:15
+        to: 2024-11-03 23:45
+        reason: null
+    TS_2:
+      - from: 2022-10-27 09:15
+        to: 2022-11-11 18:45
+        reason: stuck on constant
+      - from: 2023-07-27 23:15
+        to: 2023-09-06 17:15
+        reason: stuck on constant
   rep_merge:
-    TA:
-      order: [TA_MET, CUSTOM_AIR_T_MEAN, TA_EP]
-      method: coalesce
-    PA:
-      order: [CUSTOM_AIR_P_MEAN, PA_EP]
-      method: coalesce
-    VPD:
-      order: [VPD_MET, VPD_EP]
-      method: coalesce
     G:
       order: [G_2, G_3]
       method: average
+    PA:
+      order: [CUSTOM_AIR_P_MEAN, PA_EP]
+      method: coalesce
     SWC:
       order: [SWC_3]
       method: average
+    TA:
+      order: [TA_MET, CUSTOM_AIR_T_MEAN, TA_EP]
+      method: coalesce
     TS:
       order: [TS_1, TS_2, TS_3]
       method: average
+    VPD:
+      order: [VPD_MET, VPD_EP]
+      method: coalesce
